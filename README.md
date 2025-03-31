@@ -1,6 +1,6 @@
 # SWIFT (Scalable lightWeight Infrastructure for Fine-Tuning)
 
-> **野村作成**: [Qwen2.5モデルの学習ガイド](/source_ja/model_training_guide.md)はこちらをご覧ください。
+### **野村作成**: [Qwen2.5モデルの学習ガイド](/source_ja/model_training_guide.md)はこちらをご覧ください。
 
 <p align="center">
     <br>
