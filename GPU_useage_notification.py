@@ -165,11 +165,41 @@ def notify_latest_log():
     except SlackApiError as e:
         print("Error sending log notification:", e)
 
+def get_available_rclone_remotes():
+    """
+    rcloneの設定から利用可能なリモートのリストを取得する。
+    最初に見つかったリモートを返す。リモートが見つからない場合はNoneを返す。
+    """
+    try:
+        # rclone config showコマンドを実行して設定を取得
+        output = subprocess.check_output(["rclone", "config", "show"]).decode("utf-8")
+        
+        # 出力からリモート名を抽出
+        remotes = []
+        for line in output.split("\n"):
+            if line.strip() and line.strip()[0] == "[" and line.strip()[-1] == "]":
+                # [remote_name] の形式からremote_nameを抽出
+                remote_name = line.strip()[1:-1]
+                remotes.append(remote_name)
+        
+        if remotes:
+            print(f"利用可能なrcloneリモート: {', '.join(remotes)}")
+            return remotes[0]  # 最初に見つかったリモートを返す
+        else:
+            print("rcloneリモートが見つかりません。")
+            return None
+    except subprocess.CalledProcessError as e:
+        print(f"rclone config showコマンドの実行中にエラーが発生しました: {e}")
+        return None
+    except Exception as e:
+        print(f"rcloneリモートの取得中にエラーが発生しました: {e}")
+        return None
+
 def scp_latest_training_results():
     """
     BASE_PATH直下の最新の学習結果ディレクトリを rclone を用いて転送する処理です。
     フォルダ構造を保持するため、転送先に最新ディレクトリ名を付与しています。
-    転送先は "nat-cpt-syd:rclone" となります。
+    転送先は環境変数RCLONE_HOSTで指定されたリモート、または自動検出されたrcloneリモートとなります。
     """
     latest_dir = get_latest_training_dir(BASE_PATH)
     if latest_dir is None:
@@ -183,8 +213,19 @@ def scp_latest_training_results():
 
     source_dir = os.path.join(BASE_PATH, latest_dir)
     
-    # ホスト名を環境変数から取得するか、デフォルト値を使用
-    host_name = os.environ.get("RCLONE_HOST", "nat-cpt-nomu")
+    # ホスト名を環境変数から取得するか、rclone設定から自動検出
+    host_name = os.environ.get("RCLONE_HOST")
+    if not host_name:
+        host_name = get_available_rclone_remotes()
+        if not host_name:
+            error_message = "rcloneリモートが見つからないため、転送をスキップします。"
+            print(error_message)
+            try:
+                client.chat_postMessage(channel=SLACK_CHANNEL, text=error_message)
+            except SlackApiError as e:
+                print("Error sending error notification:", e)
+            return
+    
     dest_path = f"{host_name}:rclone/{latest_dir}"  # 転送先に最新ディレクトリ名を付与
 
     rclone_cmd = [

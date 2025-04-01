@@ -39,7 +39,7 @@ python download_qwen_model.py
 
 ## 3. GPU使用状況のモニタリングと自動インスタンス終了の設定
 
-`GPU_useage_notification.py`スクリプトを使用して、GPU使用状況をモニタリングし、Slackに通知します。学習しているターミナルとは別で、もう一つターミナルを開き、以下を順番に実行します。
+**学習しているターミナルとは別で、もう一つターミナルを開き、以下を順番に実行してください。**`GPU_useage_notification.py`スクリプトを使用して、GPU使用状況をモニタリングし、Slackに通知するための設定を行います。
 
 ### GPU_useage_notification.pyの環境変数の設定
 
@@ -67,7 +67,8 @@ SlackのユーザーID（`SLACK_MENTION_USER_ID`）は以下の手順で取得�
 
 #### インスタンスIDの取得方法
 
-Lambda LabsのインスタンスID（`LAMBDALABS_INSTANCE_ID`）は以下のコマンドを実行して取得できます。LAMBDALABS_API_KEYには管理者から提供されたapi-keyを使用してください：
+Lambda LabsのインスタンスID（`LAMBDALABS_INSTANCE_ID`）は以下のコマンドを実行して取得できます。
+**※LAMBDALABS_API_KEYの部分には管理者から提供されたapi-keyを使用してください：**
 
 ```bash
 curl -u LAMBDALABS_API_KEY : https://cloud.lambdalabs.com/api/v1/instances
@@ -131,6 +132,7 @@ rclone config
 ```bash
 ./Qwen2.5-coder_train.sh
 ```
+**注意**:ここで時々エラーが起きる場合はもう一度ライブラリのインストールを実行してください。
 
 このスクリプトは、SWIFTフレームワークを使用してQwen2.5-Coder-14B-Instructモデルの学習を行います。学習結果は`output`ディレクトリに保存されます。
 
