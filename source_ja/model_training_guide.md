@@ -23,15 +23,19 @@ pip install -e . && pip install tf-keras deepspeed slack-sdk && pip install flas
 curl https://rclone.org/install.sh | sudo bash
 ```
 
-## 2. モデルのダウンロード
+---
 
-次に、`download_qwen_model.py`スクリプトを使用してQwen2.5-Coder-14B-Instructモデルをダウンロードします。(※一度ファイルシステムでダウンロードしている場合は再度実行する必要はありません)
+## 2. モデルのダウンロード（初回のみ）
+
+次に、`download_qwen_model.py`スクリプトを使用してQwen2.5-Coder-14B-Instructモデルをダウンロードします。(※一度ダウンロードしている場合は再度実行する必要はありません)
 
 ```bash
 python download_qwen_model.py
 ```
 
 このスクリプトは、Hugging Face Hubから「Qwen2.5-Coder-14B-Instruct」モデルをダウンロードし、`models`ディレクトリに保存します。
+
+---
 
 ## 3. GPU使用状況のモニタリングと自動インスタンス終了の設定
 
@@ -50,6 +54,7 @@ export LAMBDALABS_INSTANCE_ID="your-instance-id"  # インスタンスID（自�
 
 **注意**: SlackのAPIトークンとLambda LabsのAPIキーは管理者から提供されるものを使用してください。ユーザーIDとインスタンスIDは以下の手順で自分で取得する必要があります。
 
+
 #### SlackのユーザーIDの取得方法
 
 SlackのユーザーID（`SLACK_MENTION_USER_ID`）は以下の手順で取得できます：
@@ -58,6 +63,7 @@ SlackのユーザーID（`SLACK_MENTION_USER_ID`）は以下の手順で取得�
 2. 「プロフィール」をクリックする
 3. 「その他」をクリックする
 4. 「メンバーIDをコピー」の下でメンバーIDを確認する
+
 
 #### インスタンスIDの取得方法
 
@@ -75,6 +81,7 @@ curl -u LAMBDALABS_API_KEY : https://cloud.lambdalabs.com/api/v1/instances
 - `threshold`: GPUの使用率の閾値（デフォルト: 5.0%）
 - `consecutive_low_usage_count`: 連続して低使用率と判断するカウント数（デフォルト: 2回）
 
+---
 
 ## 4. rcloneの設定(初回のみ)
 
@@ -100,7 +107,7 @@ rclone config
 8. ブラウザ認証について、リモートマシンの場合は`n`を選択
 9. 以下のようなコマンドが得られるので、別のマシン(ローカルなど)でコマンドを実行して得られたトークンを入力する：
    ```
-   rclone authorize "drive" "eyJzY29wZSI6ImRyaXZlLmZpbGUifQ"
+   rclone authorize "drive" "eyJzY29wZSI6ImRyZlLmZpbGUifQ"
    ```
 10. Shared Drive（Team Drive）の設定は`n`を選択
 11. 設定を確認して`y`を入力して保存
@@ -109,9 +116,13 @@ rclone config
 
 `GPU_useage_notification.py`スクリプト内でrcloneが使われ、指定されたgoogle driveに学習済みのモデルが転送されます。
 
+---
+
 ## 5. データセットの準備
 
 学習に使用するデータセットを`dataset`フォルダに配置します。('dataset'フォルダがない場合は作成してください)データセットの形式はSWIFTフレームワークの要件に従ってください。
+
+---
 
 ## 6. 学習の実行
 
@@ -122,6 +133,12 @@ rclone config
 ```
 
 このスクリプトは、SWIFTフレームワークを使用してQwen2.5-Coder-14B-Instructモデルの学習を行います。学習結果は`output`ディレクトリに保存されます。
+
+詳細な情報については、以下のリンクを参照してください：
+- [事前学習と微調整の基本情報](/docs/source_en/Instruction/Pre-training-and-Fine-tuning.md)
+- [コマンドラインパラメータの詳細説明](/docs/source_en/Instruction/Command-line-parameters.md)
+
+---
 
 ## 7. GPU_useage_notification.pyの実行
 
@@ -151,7 +168,3 @@ python GPU_useage_notification.py --auto-terminate=True --threshold=5.0 --consec
 2. 学習の進捗状況（最新のログエントリ）をSlackに通知
 3. GPUの使用率が一定時間低い状態が続いた場合（学習が終了したと判断される場合）：
    - 学習結果をrcloneを使用してGoogle Driveに転送
-
-
-
-
