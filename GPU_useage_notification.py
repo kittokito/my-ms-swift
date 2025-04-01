@@ -3,6 +3,7 @@ import json
 import time
 import os
 import statistics
+import argparse
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
@@ -15,7 +16,45 @@ LAMBDA_INSTANCE_ID = os.environ.get("LAMBDALABS_INSTANCE_ID")
 client = WebClient(token=SLACK_TOKEN)
 
 # ベースパス（学習結果が保存されるディレクトリ）
-BASE_PATH = "/home/ubuntu/nat-cpt-syd/ms-swift/output/Qwen2.5-Coder-14B-Instruct"
+# 現在の作業ディレクトリを動的に取得し、パスを構築
+current_dir = os.path.dirname(os.path.abspath(__file__))  # スクリプトのディレクトリを取得
+BASE_PATH = os.path.join(current_dir, "output/Qwen2.5-Coder-14B-Instruct")
+
+def get_ip_address():
+    """
+    リモートインスタンスのIPアドレスを取得する
+    SSHで接続している場合は接続先のIPアドレスを返す
+    """
+    try:
+        # ホスト名を取得
+        hostname = subprocess.check_output(["hostname"]).decode("utf-8").strip()
+        
+        # ホスト名がIPアドレス形式の場合（例：ubuntu@152-69-170-152）
+        import re
+        ip_pattern = re.compile(r'(\d+)[.-](\d+)[.-](\d+)[.-](\d+)')
+        match = ip_pattern.search(hostname)
+        
+        if match:
+            # ハイフンやドットで区切られたIPアドレスをドット区切りの形式に変換
+            ip_parts = match.groups()
+            return f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.{ip_parts[3]}"
+        
+        # 環境変数からSSH_CONNECTION情報を取得
+        ssh_connection = os.environ.get("SSH_CONNECTION")
+        if ssh_connection:
+            # SSH_CONNECTIONは "クライアントIP クライアントポート サーバIP サーバポート" の形式
+            parts = ssh_connection.split()
+            if len(parts) >= 3:
+                return parts[2]  # サーバIP（接続先）を返す
+        
+        # 上記の方法で取得できない場合は従来の方法を使用
+        ip_output = subprocess.check_output(
+            ["hostname", "-I"]
+        ).decode("utf-8")
+        return ip_output.strip().split()[0]
+    except Exception as e:
+        print("Error getting IP address:", e)
+        return "Unknown IP"
 
 def check_gpu_usage(notify_slack=True):
     """
@@ -51,7 +90,8 @@ def check_gpu_usage(notify_slack=True):
 
     if notify_slack:
         gpu_usage_str = ", ".join([f"{idx+1}: {usage:.1f}%" for idx, usage in enumerate(avg_gpu_usages)])
-        message = f"-------Instance ID-------------------\n{LAMBDA_INSTANCE_ID}\n-------GPU使用率-------------------\n{gpu_usage_str}"
+        ip_address = get_ip_address()
+        message = f"-------IP Address-------------------\n{ip_address}\n-------GPU使用率-------------------\n{gpu_usage_str}"
         try:
             client.chat_postMessage(channel=SLACK_CHANNEL, text=message)
             print("GPU usage message sent:", message)
@@ -142,7 +182,10 @@ def scp_latest_training_results():
         return
 
     source_dir = os.path.join(BASE_PATH, latest_dir)
-    dest_path = f"nat-cpt-syd:rclone/{latest_dir}"  # 転送先に最新ディレクトリ名を付与
+    
+    # ホスト名を環境変数から取得するか、デフォルト値を使用
+    host_name = os.environ.get("RCLONE_HOST", "nat-cpt-nomu")
+    dest_path = f"{host_name}:rclone/{latest_dir}"  # 転送先に最新ディレクトリ名を付与
 
     rclone_cmd = [
         "rclone", "copy", "-P",
@@ -199,13 +242,46 @@ def terminate_instance():
             pass
 
 
-if __name__ == '__main__':
-    interval_minutes = 1
-    consecutive_low_usage_count = 0
-    slack_notification_interval = 2  # 通知間隔（回数ベース）
-    check_count = 0
-    threshold = 5.0  # 5%未満を閾値とする
+def str2bool(v):
+    """文字列をブール値に変換する関数"""
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
+def parse_arguments():
+    """コマンドライン引数を解析する関数"""
+    parser = argparse.ArgumentParser(description='GPU使用率監視とインスタンス終了制御')
+    parser.add_argument('--auto-terminate', type=str2bool, default=True, 
+                      help='GPUの使用率が低下した際に自動的にインスタンスを終了するかどうか (True/False, yes/no, t/f, y/n, 1/0)')
+    parser.add_argument('--threshold', type=float, default=5.0,
+                      help='GPU使用率の閾値 (%)、この値未満が続くと終了判定')
+    parser.add_argument('--consecutive-count', type=int, default=2,
+                      help='終了判定に必要な連続低使用率回数')
+    parser.add_argument('--interval', type=int, default=15,
+                      help='監視間隔 (分)')
+    parser.add_argument('--notification-interval', type=int, default=4,
+                      help='Slack通知間隔 (回数ベース)')
+    return parser.parse_args()
+
+if __name__ == '__main__':
+    # コマンドライン引数の解析
+    args = parse_arguments()
+    
+    interval_minutes = args.interval
+    consecutive_low_usage_count = 0
+    slack_notification_interval = args.notification_interval
+    check_count = 0
+    threshold = args.threshold
+    consecutive_threshold = args.consecutive_count
+    auto_terminate = args.auto_terminate
+
+    print(f"GPU監視を開始します: 閾値={threshold}%, 連続回数={consecutive_threshold}, 自動終了={auto_terminate}")
+    
     while True:
         check_count += 1
         notify = (check_count % slack_notification_interval == 0)
@@ -223,11 +299,24 @@ if __name__ == '__main__':
         else:
             consecutive_low_usage_count = 0
 
-        if consecutive_low_usage_count >= 2:
-            # 学習終了と判断：まずrcloneによる結果転送（またはエラー通知）を実施し、
-            # その後にインスタンスをterminateする
+        if consecutive_low_usage_count >= consecutive_threshold:
+            # 学習終了と判断：まずrcloneによる結果転送を実施
             scp_latest_training_results()
-            terminate_instance()  # 必要に応じてコメント解除
-            break
+            
+            # 自動終了設定に基づいて処理
+            if auto_terminate:
+                # 自動的にインスタンスを終了
+                terminate_instance()
+                break
+            else:
+                # インスタンスを終了せず、監視を継続
+                message = f"GPUの使用率が{threshold}%未満の状態が{consecutive_threshold}回連続で続いていますが、auto-terminate=Falseのため終了しません。"
+                print(message)
+                try:
+                    client.chat_postMessage(channel=SLACK_CHANNEL, text=message)
+                except SlackApiError as e:
+                    print("Error sending message:", e)
+                # カウントをリセットして監視継続
+                consecutive_low_usage_count = 0
 
         time.sleep(interval_minutes * 60)

@@ -41,19 +41,19 @@ swift pt \
     --do_eval true \
     --val_dataset ./dataset/~ \
     --streaming true \
-    --num_train_epochs 5 \
+    --num_train_epochs 1 \
     --per_device_train_batch_size 1 \
     --learning_rate 1e-4 \
     --gradient_accumulation_steps $(expr 32 / $nproc_per_node) \
     --warmup_ratio 0.05 \
     --weight_decay 0.01 \
-    --eval_steps 10 \
-    --save_steps 10 \
+    --max_steps  5 \
+    --eval_steps 5 \
+    --save_steps 5 \
     --save_total_limit 2 \
-    --logging_steps 3 \
+    --logging_steps 1 \
     --deepspeed zero3 \
-    --max_length 1024 \
-    --max_steps  10 \
+    --max_length 16384 \
     --attn_impl 'sdpa' \
     --lora_rank $lora_rank \
     --lora_alpha $lora_alpha \
@@ -69,5 +69,3 @@ swift pt \
     #   選択肢: true（高速化、メモリ使用量増加）, false
     # --remove_unused_columns false \   # 未使用の列をデータセットから削除するかどうか
     #   選択肢: true（メモリ効率化）, false（すべての列を保持）
-
-
