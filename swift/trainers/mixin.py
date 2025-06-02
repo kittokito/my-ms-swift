@@ -1,16 +1,19 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 # Part of the implementation is borrowed from huggingface/transformers.
 import inspect
+import logging
 import os
 import shutil
 import time
 from contextlib import contextmanager
 from copy import copy
+from functools import partial
 from types import MethodType
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import safetensors
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import transformers
 from datasets import Dataset as HfDataset
@@ -18,19 +21,20 @@ from modelscope import check_local_model_is_latest
 from packaging import version
 from peft import PeftModel
 from torch.nn import Module
+from torch.utils.data import DataLoader
 from transformers import PreTrainedModel
 from transformers.data.data_collator import DataCollator
 from transformers.integrations import is_deepspeed_zero3_enabled
 from transformers.modeling_utils import unwrap_model
 from transformers.trainer import TrainerCallback
-from transformers.trainer_utils import EvalPrediction
+from transformers.trainer_utils import EvalPrediction, IntervalStrategy
 from transformers.utils import is_torch_npu_available
 
 from swift.hub import get_hub
-from swift.llm import Template
+from swift.llm import BatchSamplerShard, DataLoaderDispatcher, DataLoaderShard, Template
 from swift.plugin import MeanMetric, compute_acc, extra_tuners
 from swift.tuners import SwiftModel
-from swift.utils import get_logger, is_mp_ddp, use_torchacc
+from swift.utils import get_logger, is_mp_ddp, ms_logger_context, seed_worker, use_torchacc
 from swift.utils.torchacc_utils import ta_trim_graph
 from ..utils.torch_utils import get_device_count
 from .arguments import TrainingArguments
@@ -60,21 +64,25 @@ class SwiftMixin:
                  optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
                  preprocess_logits_for_metrics: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
                  **kwargs) -> None:
+        if not hasattr(train_dataset, '__len__') and args.dataloader_num_workers > 1:
+            args.dataloader_num_workers = 1
+            logger.warning('Using IterableDataset, setting args.dataloader_num_workers to 1.')
+
         if args.check_model and hasattr(model, 'model_dir'):
-            from swift.utils.logger import ms_logger_ignore_error
-            with ms_logger_ignore_error():
+            with ms_logger_context(logging.CRITICAL):
                 check_local_model_is_latest(
                     model.model_dir, user_agent={
                         'invoked_by': 'local_trainer',
                         'third_party': 'swift',
                     })
+        if eval_dataset is None and args:
+            args.evaluation_strategy = IntervalStrategy.NO
+            args.eval_strategy = IntervalStrategy.NO
+
         self._custom_metrics = {}
         self.template = template
         self.max_memory = 0
         self.hub = get_hub()
-        if template.sequence_parallel_size > 1:
-            from swift.trainers.xtuner import init_sequence_parallel_xtuner
-            init_sequence_parallel_xtuner(template.sequence_parallel_size)
 
         self.model_meta = model.model_meta
         with self.hub.patch_hub():
@@ -98,6 +106,9 @@ class SwiftMixin:
             self.can_return_loss = can_return_loss(model)
         self.label_names = self.label_names or ['labels']
         self.start_time = time.time()
+        if self.template.sequence_parallel_size > 1:
+            from swift.trainers.sequence_parallel import sequence_parallel
+            sequence_parallel.prepare_trainer(self)
 
     def _save_initial_model(self, output_dir):
         # pissa/olora/lora-ga
@@ -159,10 +170,11 @@ class SwiftMixin:
     def _save_model(self, output_dir: Optional[str] = None, state_dict=None):
         # model
         supported_classes = (SwiftModel, PreTrainedModel, PeftModel)
+        supported_names = ('SentenceTransformer', )
         if AutoModelForCausalLMWithValueHead is not None:
             supported_classes = supported_classes + (AutoModelForCausalLMWithValueHead, )
         save_safetensors = self.args.save_safetensors
-        if not isinstance(self.model, supported_classes):
+        if not isinstance(self.model, supported_classes) and self.model.__class__.__name__ not in supported_names:
             if state_dict is None:
                 state_dict = self.model.state_dict()
 
@@ -199,7 +211,28 @@ class SwiftMixin:
             extra_tuners[self.args.train_type].save_pretrained(
                 self.model, output_dir, state_dict=state_dict, safe_serialization=save_safetensors)
         else:
-            self.model.save_pretrained(output_dir, state_dict=state_dict, safe_serialization=save_safetensors)
+            if self.model.__class__.__name__ != 'SentenceTransformer':
+                self.model.save_pretrained(output_dir, state_dict=state_dict, safe_serialization=save_safetensors)
+            else:
+
+                @contextmanager
+                def save_context():
+                    save_pretrained = self.model[0].auto_model.save_pretrained
+                    _state_dict = {
+                        key[len('0.auto_model.'):] if 'auto_model' in key else key: value
+                        for key, value in state_dict.items()
+                    }
+                    self.model[0].auto_model.save_pretrained = partial(
+                        self.model[0].auto_model.save_pretrained, state_dict=_state_dict)
+                    yield
+                    self.model[0].auto_model.save_pretrained = save_pretrained
+
+                with save_context():
+                    self.model.save_pretrained(output_dir, safe_serialization=save_safetensors)
+                    # copy sentencetransformers files
+                    from swift.utils import copy_files_by_pattern
+                    copy_files_by_pattern(self.model.model_dir, output_dir, '*.py')
+                    copy_files_by_pattern(self.model.model_dir, output_dir, '*.json')
 
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         """Compatible with swift and peft"""
@@ -224,7 +257,12 @@ class SwiftMixin:
         if not is_adapter:
             from swift.llm import save_checkpoint
             additional_saved_files = self.model_meta.additional_saved_files
-            save_checkpoint(None, self.template.processor, output_dir, additional_saved_files=additional_saved_files)
+            save_checkpoint(
+                None,
+                self.template.processor,
+                output_dir,
+                model_dirs=[self.model.model_dir],
+                additional_saved_files=additional_saved_files)
             if getattr(self.model, 'origin_generation_config', None):
                 self.model.origin_generation_config.save_pretrained(output_dir)
 
@@ -275,19 +313,62 @@ class SwiftMixin:
         finally:
             Accelerator.clip_grad_norm_ = origin_clip_grad_norm_
 
+    def _prepare_gradient_checkpointing(self, model) -> None:
+        from swift.llm import HfConfigFactory, get_model_arch, deep_getattr, dynamic_gradient_checkpointing
+        args = self.args
+        if args.gradient_checkpointing or args.vit_gradient_checkpointing:
+            HfConfigFactory.set_model_config_attr(model, 'use_cache', False)
+            dynamic_gradient_checkpointing(model, args.vit_gradient_checkpointing)
+        if args.gradient_checkpointing:
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=args.gradient_checkpointing_kwargs)
+            model.enable_input_require_grads()
+
+        model_meta = model.model_meta
+        model_arch = get_model_arch(model_meta.model_arch)
+        if model_meta.is_multimodal and model_arch:
+            for vision_tower_name in model_arch.vision_tower:
+                vision_tower = deep_getattr(model, vision_tower_name)
+                if hasattr(vision_tower, 'enable_input_require_grads'):
+                    try:
+                        if args.vit_gradient_checkpointing:
+                            vision_tower.gradient_checkpointing_enable(
+                                gradient_checkpointing_kwargs=args.gradient_checkpointing_kwargs)
+                            vision_tower.enable_input_require_grads()
+                        else:
+                            vision_tower.gradient_checkpointing_disable()
+                            vision_tower.disable_input_require_grads()
+                    except (NotImplementedError, AttributeError):
+                        pass
+        # Avoid vit_gradient_checkpointing being overwritten by transformers.Trainer.gradient_checkpointing_enable.
+        self.args.gradient_checkpointing = False
+
     def train(self, *args, **kwargs):
         if self.model_meta.is_multimodal:
-            models = list(
-                set([
-                    v for k, v in self.__dict__.items()
-                    if isinstance(v, nn.Module) and k in {'model', 'ref_model', 'reward_model', 'value_model'}
-                ]))
+            models = []
+            for model_name in ['model', 'ref_model', 'value_model']:
+                model = getattr(self, model_name, None)
+                if isinstance(model, nn.Module):
+                    models.append(model)
+
+            reward_model = getattr(self, 'reward_model', None)
+            if reward_model is not None:
+                if isinstance(reward_model, list):
+                    models.extend([m for m in reward_model if isinstance(m, nn.Module)])
+                elif isinstance(reward_model, nn.Module):
+                    models.append(reward_model)
+
+            models = list(set(self.accelerator.unwrap_model(model) for model in models))  # Deduplicate
             self.template.register_post_encode_hook(models)
             logger.info(f'Successfully registered post_encode hook: {[model.__class__.__name__ for model in models]}.')
         self._save_initial_model(self.args.output_dir)
+
+        # gradient_checkpointing
+        gradient_checkpointing = self.args.gradient_checkpointing
+        self._prepare_gradient_checkpointing(self.accelerator.unwrap_model(self.model))
         with self.hub.patch_hub(), self._fix_grad_norm_nan():
             res = super().train(*args, **kwargs)
         self.template.remove_post_encode_hook()
+        self.args.gradient_checkpointing = gradient_checkpointing  # recover
         return res
 
     def push_to_hub(self, *args, **kwargs):
@@ -358,19 +439,6 @@ class SwiftMixin:
         else:
             super().create_optimizer_and_scheduler(num_training_steps=num_training_steps)
 
-    def _get_train_sampler(self) -> Optional[torch.utils.data.Sampler]:
-        if self.args.train_sampler_random:
-            return super()._get_train_sampler()
-        else:
-            return self._get_eval_sampler(self.train_dataset)
-
-    def get_train_dataloader(self):
-        if self.template.sequence_parallel_size == 1:
-            return super().get_train_dataloader()
-        else:
-            from swift.trainers.xtuner import get_xtuner_train_dataloader
-            return get_xtuner_train_dataloader(self)
-
     def _compute_acc(self, outputs, labels) -> None:
         args = self.args
         acc_steps = args.acc_steps
@@ -415,3 +483,73 @@ class SwiftMixin:
 
         self.model.train()
         return eval_dict
+
+    def get_batch_samples(self, *args, **kwargs):
+        res = super().get_batch_samples(*args, **kwargs)
+        from swift.trainers.sequence_parallel import sequence_parallel
+        if self.template.sequence_parallel_size == 1 or 'Ulysses' == sequence_parallel.__class__.__name__:
+            # ulysses split inputs in the model hook, so no need to gather num_items_in_batch
+            return res
+
+        batch_samples, num_items_in_batch = res
+        if num_items_in_batch is None:
+            num_items_in_batch = torch.tensor(0).to(args[2])
+        from swift.trainers.sequence_parallel import sequence_parallel
+        dist.all_reduce(num_items_in_batch, dist.ReduceOp.SUM, sequence_parallel.sp_group)
+        return batch_samples, num_items_in_batch
+
+
+class DataLoaderMixin:
+
+    def get_train_dataloader(self):
+        dataloader = None
+        if self.template.sequence_parallel_size > 1:
+            from swift.trainers.sequence_parallel import sequence_parallel
+            dataloader = sequence_parallel.get_dataloader(self, self.train_dataset, self._train_batch_size)
+        if dataloader is None:
+            # Higher efficiency
+            if self.train_dataset is None:
+                raise ValueError('Trainer: training requires a train_dataset.')
+            args = self.args
+            train_dataset = self.train_dataset
+
+            dataloader_params = {
+                'collate_fn': self.data_collator,
+                'num_workers': args.dataloader_num_workers,
+                'pin_memory': args.dataloader_pin_memory,
+                'persistent_workers': args.dataloader_persistent_workers,
+                'prefetch_factor': args.dataloader_prefetch_factor
+            }
+            batch_sampler_params = {
+                'drop_last': args.dataloader_drop_last,
+                'shuffle': args.train_dataloader_shuffle,
+                'data_seed': args.data_seed,
+            }
+
+            if hasattr(train_dataset, '__len__'):
+                batch_sampler = BatchSamplerShard(
+                    len(train_dataset), batch_size=self._train_batch_size, **batch_sampler_params)
+                dataloader_params['worker_init_fn'] = partial(
+                    seed_worker, num_workers=self.args.dataloader_num_workers, rank=self.args.process_index)
+                dataloader_params['batch_sampler'] = batch_sampler
+                dataloader = DataLoaderShard(train_dataset, device=self.accelerator.device, **dataloader_params)
+            else:
+                # IterableDataset
+                if dist.is_initialized() and dataloader_params['prefetch_factor']:
+                    dataloader_params['prefetch_factor'] = dataloader_params['prefetch_factor'] * dist.get_world_size()
+                dataloader = DataLoader(train_dataset, batch_size=self._train_batch_size, **dataloader_params)
+                dataloader = DataLoaderDispatcher(dataloader, self.accelerator.device)
+
+        return dataloader
+
+    def get_eval_dataloader(self, eval_dataset=None):
+        dataloader = None
+        if self.template.sequence_parallel_size > 1:
+            from swift.trainers.sequence_parallel import sequence_parallel
+            if eval_dataset is None and self.eval_dataset is None:
+                raise ValueError('Trainer: evaluation requires an eval_dataset.')
+            eval_dataset = eval_dataset if eval_dataset is not None else self.eval_dataset
+            dataloader = sequence_parallel.get_dataloader(self, eval_dataset, self.args.eval_batch_size)
+        if dataloader is None:
+            return super().get_eval_dataloader(eval_dataset=eval_dataset)
+        return dataloader

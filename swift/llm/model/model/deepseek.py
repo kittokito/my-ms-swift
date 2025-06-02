@@ -1,5 +1,4 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
-import os
 import sys
 from typing import Any, Dict
 
@@ -110,7 +109,12 @@ register_model(
             ]),
             ModelGroup([
                 Model('cognitivecomputations/DeepSeek-V3-awq', 'cognitivecomputations/DeepSeek-V3-AWQ'),
-            ])
+                Model('cognitivecomputations/DeepSeek-V3-0324-AWQ', 'cognitivecomputations/DeepSeek-V3-0324-AWQ')
+            ]),
+            ModelGroup([
+                Model('deepseek-ai/DeepSeek-Prover-V2-7B', 'deepseek-ai/DeepSeek-Prover-V2-7B'),
+                Model('deepseek-ai/DeepSeek-Prover-V2-671B', 'deepseek-ai/DeepSeek-Prover-V2-671B'),
+            ]),
         ],
         TemplateType.deepseek_v2_5,
         get_model_tokenizer_deepseek_moe,
@@ -247,6 +251,7 @@ register_model(
             ModelGroup([
                 Model('deepseek-ai/DeepSeek-R1', 'deepseek-ai/DeepSeek-R1'),
                 Model('deepseek-ai/DeepSeek-R1-Zero', 'deepseek-ai/DeepSeek-R1-Zero'),
+                Model('deepseek-ai/DeepSeek-R1-0528', 'deepseek-ai/DeepSeek-R1-0528')
             ]),
             ModelGroup([
                 Model('cognitivecomputations/DeepSeek-R1-awq', 'cognitivecomputations/DeepSeek-R1-AWQ'),
@@ -268,31 +273,19 @@ register_model(
                 Model('deepseek-ai/DeepSeek-R1-Distill-Qwen-7B', 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B'),
                 Model('deepseek-ai/DeepSeek-R1-Distill-Qwen-14B', 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B'),
                 Model('deepseek-ai/DeepSeek-R1-Distill-Qwen-32B', 'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B'),
+                Model('iic/QwenLong-L1-32B', 'Tongyi-Zhiwen/QwenLong-L1-32B'),
             ],
                        requires=['transformers>=4.37']),
             ModelGroup([
                 Model('deepseek-ai/DeepSeek-R1-Distill-Llama-8B', 'deepseek-ai/DeepSeek-R1-Distill-Llama-8B'),
                 Model('deepseek-ai/DeepSeek-R1-Distill-Llama-70B', 'deepseek-ai/DeepSeek-R1-Distill-Llama-70B'),
             ]),
+            ModelGroup([
+                Model('deepseek-ai/DeepSeek-R1-0528-Qwen3-8B', 'deepseek-ai/DeepSeek-R1-0528-Qwen3-8B'),
+            ]),
         ],
         TemplateType.deepseek_r1,
         get_model_tokenizer_with_flash_attn,
-        architectures=['Qwen2ForCausalLM', 'LlamaForCausalLM'],
+        architectures=['Qwen2ForCausalLM', 'LlamaForCausalLM', 'Qwen3ForCausalLM'],
         model_arch=ModelArch.llama,
-    ))
-
-register_model(
-    ModelMeta(
-        LLMModelType.moonlight,
-        [
-            ModelGroup([
-                Model('moonshotai/Moonlight-16B-A3B', 'moonshotai/Moonlight-16B-A3B'),
-                Model('moonshotai/Moonlight-16B-A3B-Instruct', 'moonshotai/Moonlight-16B-A3B-Instruct'),
-            ]),
-        ],
-        TemplateType.moonlight,
-        get_model_tokenizer_with_flash_attn,
-        architectures=['DeepseekV3ForCausalLM'],
-        model_arch=ModelArch.deepseek_v2,
-        requires=['transformers<4.49'],
     ))

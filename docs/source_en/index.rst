@@ -27,9 +27,9 @@ Swift DOCUMENTATION
    Instruction/Export-and-push.md
    Instruction/Reinforced-Fine-tuning.md
    Instruction/GRPO.md
+   Instruction/Agent-support.md
    Instruction/Supported-models-and-datasets.md
    Instruction/Use-tuners.md
-   Instruction/Agent-support.md
    Instruction/Frequently-asked-questions.md
 
 
@@ -39,7 +39,7 @@ Swift DOCUMENTATION
 
    Customization/Custom-model.md
    Customization/Custom-dataset.md
-   Customization/Plugin.md
+   Customization/Pluginization.md
 
 
 .. toctree::
@@ -50,6 +50,7 @@ Swift DOCUMENTATION
    BestPractices/GRPO-Multi-Modal-Training.md
    BestPractices/GRPO-Code-Training.md
    BestPractices/Embedding.md
+   BestPractices/Rapidly-Training-VL-model.md
    BestPractices/NPU-support.md
    BestPractices/More-Best-Practices.md
 

@@ -45,6 +45,8 @@ def plot_images(images_dir: str,
                 figsize: Tuple[int, int] = (8, 5),
                 dpi: int = 100) -> None:
     """Using tensorboard's data content to plot images"""
+    if not os.path.exists(tb_dir):
+        return
     smooth_key = smooth_key or []
     os.makedirs(images_dir, exist_ok=True)
     fname = [fname for fname in os.listdir(tb_dir) if os.path.isfile(os.path.join(tb_dir, fname))][0]
@@ -67,6 +69,6 @@ def plot_images(images_dir: str,
             ax.plot(steps, values_s, color=TB_COLOR_SMOOTH)
         else:
             ax.plot(steps, values, color=TB_COLOR_SMOOTH)
-        fpath = os.path.join(images_dir, k.replace('/', '_'))
+        fpath = os.path.join(images_dir, k.replace('/', '_').replace('.', '_'))
         plt.savefig(fpath, dpi=dpi, bbox_inches='tight')
         plt.close()

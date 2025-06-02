@@ -85,6 +85,15 @@ def set_generation_config(model: nn.Module, generation_config: GenerationConfig)
     model.generation_config = generation_config
 
 
+def is_moe_model(model):
+    if 'Moe' in model.__class__.__name__:
+        return True
+    for key in ['num_experts', 'num_experts_per_tok', 'moe_intermediate_size']:
+        if hasattr(model.config, key):
+            return True
+    return False
+
+
 def find_module_list(model) -> Optional[nn.ModuleList]:
     module_lists = []
     for m in model.modules():
@@ -141,20 +150,24 @@ def _add_gradient_checkpointing(module_list):
         module.__old_forward = __old_forward
 
 
-def dynamic_gradient_checkpointing(model) -> None:
+def dynamic_gradient_checkpointing(model, including_vit: bool = False) -> None:
     from .model import ModelMeta, get_model_arch
     model_meta: ModelMeta = model.model_meta
     model_arch = get_model_arch(model_meta.model_arch)
     if model_meta.is_multimodal and model_arch:
-        tower_names = model_arch.language_model + model_arch.vision_tower
+        tower_names = model_arch.language_model.copy()
+        if including_vit:
+            tower_names += model_arch.vision_tower
     else:
         tower_names = [None]
 
+    model.supports_gradient_checkpointing = True
     for tower_name in tower_names:
         if tower_name is None:
             model_tower = model
         else:
             model_tower = deep_getattr(model, tower_name)
+        model_tower.supports_gradient_checkpointing = True
         module_list = find_module_list(model_tower)
         if module_list is None:
             continue
@@ -222,7 +235,14 @@ def save_checkpoint(model: Optional[PreTrainedModel],
                     model_dirs: List[str] = None,
                     additional_saved_files: Optional[List[str]] = None) -> None:
     if model is not None:
-        model.save_pretrained(output_dir, safe_serialization=safe_serialization, max_shard_size=max_shard_size)
+        if model.__class__.__name__ != 'SentenceTransformer':
+            model.save_pretrained(output_dir, safe_serialization=safe_serialization, max_shard_size=max_shard_size)
+        else:
+            model.save_pretrained(output_dir, safe_serialization=safe_serialization)
+            # copy sentencetransformers files
+            from swift.utils import copy_files_by_pattern
+            copy_files_by_pattern(model.model_dir, output_dir, '*.py')
+            copy_files_by_pattern(model.model_dir, output_dir, '*.json')
     processor.save_pretrained(output_dir)
 
     if model_dirs is None:
@@ -231,7 +251,7 @@ def save_checkpoint(model: Optional[PreTrainedModel],
         model_dirs = model_dirs.copy()
     if model and model.model_dir and model.model_dir not in model_dirs:
         model_dirs.append(model.model_dir)
-    for src_file in additional_saved_files or [] + ['preprocessor_config.json', 'args.json']:
+    for src_file in (additional_saved_files or []) + ['preprocessor_config.json', 'args.json']:
         for model_dir in model_dirs:
             src_path: str = os.path.join(model_dir, src_file)
             tgt_path = os.path.join(output_dir, src_file)
