@@ -1,6 +1,7 @@
 # 野村追加分
 /dataset/*  
 /models/*
+/train_data/*
 
 
 # Byte-compiled / optimized / DLL files
