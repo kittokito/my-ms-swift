@@ -33,21 +33,21 @@ NPROC_PER_NODE=$nproc_per_node \
 swift pt \
     --model ./models/Qwen2.5-Coder-14B-Instruct \
     --train_type lora \
-    --dataset  ./train_data/plc_normal_02-1.jsonl \
+    --dataset  ./train_data/plc_normal_02-1_kana_train.jsonl \
+    --val_dataset ./train_data/plc_normal_02-1_kana_val.jsonl \
     --torch_dtype bfloat16 \
-    --do_eval false \
-    --streaming true \
-    --num_train_epochs 3 \
+    --do_eval true \
+    --streaming false \
+    --num_train_epochs 2 \
     --per_device_train_batch_size 1 \
     --learning_rate 1e-4 \
     --gradient_accumulation_steps $(expr 64 / $nproc_per_node) \
     --warmup_ratio 0.05 \
     --weight_decay 0.01 \
-    --max_steps  626 \
-    --eval_steps 20 \
-    --save_steps  208 \
+    --eval_steps 50 \
+    --save_strategy  epoch \
     --save_total_limit 3 \
-    --logging_steps 10 \
+    --logging_steps 20 \
     --deepspeed zero3 \
     --max_length 16384 \
     --attn_impl 'sdpa' \
@@ -59,7 +59,7 @@ swift pt \
     --dataloader_num_workers 1 \
     --acc_strategy 'seq' \
     --logging_first_step true
-    
+ 
     # 追加オプション（コメント解除して使用可能）
     # --val_dataset ./dataset/~ \
     # --dataloader_pin_memory true \    # データローダーのピンメモリ機能（GPUへの転送を高速化）

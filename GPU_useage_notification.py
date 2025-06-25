@@ -120,34 +120,54 @@ def get_latest_training_dir(base_path=BASE_PATH):
 def get_latest_log_entry():
     """
     最新の学習フォルダ内のlogging.jsonlファイルから、最後の非空行をJSONとして読み込み返す。
-    最新のフォルダ名とログエントリを返す。
+    また、最も近い"eval_loss"の値も探す。
+    最新のフォルダ名、ログエントリ、eval_lossの値を返す。
     """
     latest_dir = get_latest_training_dir(BASE_PATH)
     if latest_dir is None:
-        return None, None
+        return None, None, None
     log_file = os.path.join(BASE_PATH, latest_dir, "logging.jsonl")
     if not os.path.exists(log_file):
-        return latest_dir, None
+        return latest_dir, None, None
     try:
         with open(log_file, "r") as f:
             lines = f.readlines()
+        
+        latest_entry = None
+        eval_loss_value = None
+        
+        # 最新のエントリとeval_lossを含むエントリを探す
         for line in reversed(lines):
             if line.strip():
                 try:
                     log_entry = json.loads(line)
-                    return latest_dir, log_entry
+                    
+                    # 最新のエントリを保存（まだ見つかっていない場合）
+                    if latest_entry is None:
+                        latest_entry = log_entry
+                    
+                    # eval_lossの値を探す（まだ見つかっていない場合）
+                    if eval_loss_value is None and "eval_loss" in log_entry:
+                        eval_loss_value = log_entry["eval_loss"]
+                        # eval_lossが見つかり、最新エントリも既にある場合は終了
+                        if latest_entry is not None:
+                            break
+                        
                 except json.JSONDecodeError:
                     continue
+        
+        return latest_dir, latest_entry, eval_loss_value
     except Exception as e:
         print("Error reading log file:", e)
-    return latest_dir, None
+    return latest_dir, None, None
 
 def notify_latest_log():
     """
     最新の学習フォルダとlogging.jsonlの最新エントリをSlackに通知する。
     ただし、最新ログがモデルパラメータ情報などの最終まとめログの場合は通知しない。
+    eval_lossが存在する場合は、それも一緒に表示する。
     """
-    latest_dir, log_entry = get_latest_log_entry()
+    latest_dir, log_entry, eval_loss_value = get_latest_log_entry()
     if latest_dir is None:
         message = "------学習ログ------------------\n学習ディレクトリが見つかりません。"
     elif log_entry is None:
@@ -158,7 +178,13 @@ def notify_latest_log():
         return
     else:
         log_str = json.dumps(log_entry, ensure_ascii=False)
-        message = f"------学習ログ------------------\n{log_str}"
+        
+        # eval_lossが存在する場合は最初に表示
+        if eval_loss_value is not None:
+            message = f"------最新のeval_loss------------------\neval_loss: {eval_loss_value}"
+            message += f"\n------学習ログ------------------\n{log_str}"
+        else:
+            message = f"------学習ログ------------------\n{log_str}"
     try:
         client.chat_postMessage(channel=SLACK_CHANNEL, text=message)
         print("Log notification sent:", message)
