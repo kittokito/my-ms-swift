@@ -500,7 +500,6 @@ register_model(
                 Model('Qwen/Qwen3-4B-Base', 'Qwen/Qwen3-4B-Base'),
                 Model('Qwen/Qwen3-8B-Base', 'Qwen/Qwen3-8B-Base'),
                 Model('Qwen/Qwen3-14B-Base', 'Qwen/Qwen3-14B-Base'),
-                Model('Qwen/Qwen3-32B-Base', 'Qwen/Qwen3-32B-Base'),
                 # instruct
                 Model('Qwen/Qwen3-0.6B', 'Qwen/Qwen3-0.6B'),
                 Model('Qwen/Qwen3-1.7B', 'Qwen/Qwen3-1.7B'),
@@ -536,7 +535,6 @@ register_model(
         [
             ModelGroup([
                 Model('Qwen/Qwen3-30B-A3B-Base', 'Qwen/Qwen3-30B-A3B-Base'),
-                Model('Qwen/Qwen3-235B-A22B-Base', 'Qwen/Qwen3-235B-A22B-Base'),
                 # instruct
                 Model('Qwen/Qwen3-30B-A3B', 'Qwen/Qwen3-30B-A3B'),
                 Model('Qwen/Qwen3-235B-A22B', 'Qwen/Qwen3-235B-A22B'),
@@ -808,6 +806,12 @@ def get_model_tokenizer_ovis(*args, **kwargs):
         use_submodel_func(model, 'llm', func_list)
         embedding = model.get_input_embeddings()
         patch_output_clone(embedding)
+        if hasattr(model.visual_tokenizer, 'backbone'):
+            backbone = model.visual_tokenizer.backbone
+            if hasattr(backbone, 'vision_model'):
+                patch_get_input_embeddings(model.visual_tokenizer, 'backbone.vision_model.embeddings')
+            elif hasattr(backbone, 'preprocessor'):
+                patch_get_input_embeddings(model.visual_tokenizer, 'backbone.preprocessor.patchifier')
     try:
         # fix device_map
         from transformers.cache_utils import HybridCache
@@ -924,3 +928,31 @@ register_model(
         architectures=['Qwen2ForRewardModel'],
         requires=['transformers>=4.37'],
     ))
+
+register_model(
+    ModelMeta(
+        LLMModelType.qwen3_emb, [
+            ModelGroup([
+                Model('Qwen/Qwen3-Embedding-0.6B', 'Qwen/Qwen3-Embedding-0.6B'),
+                Model('Qwen/Qwen3-Embedding-4B', 'Qwen/Qwen3-Embedding-4B'),
+                Model('Qwen/Qwen3-Embedding-8B', 'Qwen/Qwen3-Embedding-8B'),
+            ]),
+        ],
+        TemplateType.qwen3_emb,
+        get_model_tokenizer_with_flash_attn,
+        additional_saved_files=['config_sentence_transformers.json', '1_Pooling', 'modules.json'],
+        architectures=['Qwen3ForCausalLM']))
+
+register_model(
+    ModelMeta(
+        LLMModelType.qwen3_reranker, [
+            ModelGroup([
+                Model('Qwen/Qwen3-Reranker-0.6B', 'Qwen/Qwen3-Reranker-0.6B'),
+                Model('Qwen/Qwen3-Reranker-4B', 'Qwen/Qwen3-Reranker-4B'),
+                Model('Qwen/Qwen3-Reranker-8B', 'Qwen/Qwen3-Reranker-8B'),
+            ]),
+        ],
+        TemplateType.qwen3_reranker,
+        get_model_tokenizer_with_flash_attn,
+        architectures=['Qwen3ForCausalLM'],
+        task_type='reranker'))

@@ -62,6 +62,30 @@ register_template(
 # '<think>\n\n</think>\n\n'
 register_template(QwenTemplateMeta(LLMTemplateType.qwen3, default_system=None, template_cls=ThinkingTemplate))
 
+
+class Qwen3RerankerTemplate(Template):
+    instruction = 'Given a web search query, retrieve relevant passages that answer the query'
+
+    def _preprocess_inputs(self, inputs: StdTemplateInputs) -> None:
+        super()._preprocess_inputs(inputs)
+        query = inputs.messages[-2]['content']
+        doc = inputs.messages[-1]['content']
+        user_message = '<Instruct>: ' + self.instruction + '\n' + '<Query>: ' + query + '\n' + '<Document>: ' + doc
+        inputs.messages[-2]['content'] = user_message
+        inputs.messages.pop(-1)
+
+
+qwen3_reranker_system = (
+    'Judge whether the Document meets the requirements based on the Query and the Instruct provided. '
+    'Note that the answer can only be \"yes\" or \"no\".')
+
+register_template(
+    QwenTemplateMeta(
+        LLMTemplateType.qwen3_reranker,
+        default_system=qwen3_reranker_system,
+        response_prefix='<think>\n\n</think>\n\n',
+        template_cls=Qwen3RerankerTemplate))
+
 register_template(Qwen2_5MathTemplateMeta(LLMTemplateType.qwen2_5_math))
 
 
@@ -408,8 +432,10 @@ class Qwen2_5OmniTemplate(Qwen2_5VLTemplate):
     version = 'omni'
     placeholder_tokens = ['<|IMAGE|>', '<|AUDIO|>', '<|VIDEO|>']
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def init_processor(self, processor) -> None:
+        if processor is None:
+            return
+        super().init_processor(processor)
         from transformers.models.qwen2_5_omni.processing_qwen2_5_omni import Qwen2_5OmniProcessorKwargs
         default = Qwen2_5OmniProcessorKwargs._defaults
         self.seconds_per_chunk = default['videos_kwargs']['seconds_per_chunk']

@@ -5,7 +5,6 @@ import torch
 from megatron.core import mpu
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.training import get_args, get_timers
-from megatron.training.training import cyclic_iter
 
 from swift.llm import DataLoaderDispatcher
 
@@ -19,7 +18,7 @@ def get_swift_datasets_provider(train_dataset, val_dataset):
         step_batch_size = \
             args.micro_batch_size * data_parallel_size
         # To avoid errors caused by the validation set being insufficient to complete a single step.
-        if len(val_dataset) < step_batch_size:
+        if val_dataset is not None and len(val_dataset) < step_batch_size:
             val_dataset = None
         return train_dataset, val_dataset, None
 
@@ -34,6 +33,7 @@ class MegatronDataLoaderDispatcher(DataLoaderDispatcher):
 
 
 def build_streaming_dataloader(args, dataset, collate_fn):
+    from megatron.training.training import cyclic_iter
     base_dataloader = torch.utils.data.DataLoader(
         dataset,
         num_workers=args.num_workers,
@@ -46,9 +46,8 @@ def build_streaming_dataloader(args, dataset, collate_fn):
     return iter(cyclic_iter(MegatronDataLoaderDispatcher(base_dataloader)))
 
 
+# Code borrowed from NVIDIA/Megatron-LM
 def get_batch_on_this_tp_rank(data_iterator):
-    # copy from megatron-lm
-
     args = get_args()
 
     def _broadcast(item):
@@ -58,24 +57,20 @@ def get_batch_on_this_tp_rank(data_iterator):
 
     if mpu.get_tensor_model_parallel_rank() == 0:
 
-        try:
-            data = next(data_iterator)
-        except StopIteration:
-            seq_length = -1
-        else:
-            input_ids = data['input_ids']
-            seq_length = input_ids.shape[1]
-            batch = {
-                'input_ids': input_ids.cuda(non_blocking=True),
-                'labels': data['labels'].cuda(non_blocking=True),
-                'attention_mask':
-                None if 'attention_mask' not in data else data['attention_mask'].cuda(non_blocking=True),
-                'position_ids': data['position_ids'].cuda(non_blocking=True)
-            }
+        data = next(data_iterator)
+        is_finished = data.pop('is_finished', False)
+        input_ids = data['input_ids']
+        seq_length = input_ids.shape[1]
+        batch = {
+            'input_ids': input_ids.cuda(non_blocking=True),
+            'labels': data['labels'].cuda(non_blocking=True),
+            'attention_mask': None if 'attention_mask' not in data else data['attention_mask'].cuda(non_blocking=True),
+            'position_ids': data['position_ids'].cuda(non_blocking=True)
+        }
+        if is_finished:
+            seq_length = -seq_length  # add flag
         seq_length = torch.tensor(seq_length).cuda(non_blocking=True)
         _broadcast(seq_length)
-        if seq_length.item() == -1:
-            return {}
         if args.pipeline_model_parallel_size == 1:
             _broadcast(batch['input_ids'])
             _broadcast(batch['labels'])
@@ -83,11 +78,13 @@ def get_batch_on_this_tp_rank(data_iterator):
             _broadcast(batch['position_ids'])
 
         elif mpu.is_pipeline_first_stage():
+            batch['labels'] = None
             _broadcast(batch['input_ids'])
             _broadcast(batch['attention_mask'])
             _broadcast(batch['position_ids'])
 
         elif mpu.is_pipeline_last_stage():
+            batch['input_ids'] = None
             _broadcast(batch['labels'])
             _broadcast(batch['attention_mask'])
             _broadcast(batch['position_ids'])
@@ -95,8 +92,11 @@ def get_batch_on_this_tp_rank(data_iterator):
     else:
         seq_length = torch.empty((), dtype=torch.int64, device=torch.cuda.current_device())
         _broadcast(seq_length)
-        if seq_length.item() == -1:
-            return {}
+        if seq_length.item() < 0:
+            seq_length = -seq_length
+            is_finished = True
+        else:
+            is_finished = False
         micro_batch_size = 1  # use qkv_format 'thd'
         input_ids = torch.empty((micro_batch_size, seq_length), dtype=torch.int64, device=torch.cuda.current_device())
         labels = torch.empty((micro_batch_size, seq_length), dtype=torch.int64, device=torch.cuda.current_device())
@@ -136,6 +136,8 @@ def get_batch_on_this_tp_rank(data_iterator):
             'attention_mask': attention_mask,
             'position_ids': position_ids
         }
+    if is_finished:
+        args.train_iters = args.curr_iteration + 1
 
     return batch
 
@@ -205,12 +207,10 @@ def get_batch(data_iterator):
 
     # TODO: this is pretty hacky, find a better way
     if (not mpu.is_pipeline_first_stage()) and (not mpu.is_pipeline_last_stage()):
-        return None, None, None, None, None
+        return {key: None for key in ['input_ids', 'attention_mask', 'position_ids']}
 
     # get batches based on the TP rank you are on
     batch = get_batch_on_this_tp_rank(data_iterator)
-    if not batch:
-        return batch
     batch['packed_seq_params'] = get_packed_seq_params(batch['position_ids'])
     # slice batch along sequence dimension for context parallelism
     batch = get_batch_on_this_cp_rank(batch)

@@ -14,6 +14,8 @@ class LLMModelType:
     qwq = 'qwq'
     qwen3 = 'qwen3'
     qwen3_moe = 'qwen3_moe'
+    qwen3_emb = 'qwen3_emb'
+    qwen3_reranker = 'qwen3_reranker'
 
     qwen2_gte = 'qwen2_gte'
 
@@ -91,6 +93,7 @@ class LLMModelType:
     phi4 = 'phi4'
 
     minimax = 'minimax'
+    minimax_m1 = 'minimax_m1'
 
     gemma = 'gemma'
     gemma2 = 'gemma2'
@@ -115,11 +118,13 @@ class LLMModelType:
     moonlight = 'moonlight'
     mimo = 'mimo'
     mimo_rl = 'mimo_rl'
+    dots1 = 'dots1'
 
 
 class BertModelType:
     modern_bert = 'modern_bert'
     modern_bert_gte = 'modern_bert_gte'
+    modern_bert_gte_reranker = 'modern_bert_gte_reranker'
     bert = 'bert'
 
 
