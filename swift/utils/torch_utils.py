@@ -336,14 +336,18 @@ def get_device_count() -> int:
         return 0
 
 
-def gc_collect() -> None:
-    gc.collect()
+def empty_cache():
     if is_torch_npu_available():
         torch.npu.empty_cache()
     elif is_torch_mps_available():
         torch.mps.empty_cache()
     elif is_torch_cuda_available():
         torch.cuda.empty_cache()
+
+
+def gc_collect() -> None:
+    gc.collect()
+    empty_cache()
 
 
 class Serializer:
@@ -368,8 +372,8 @@ class Serializer:
 
 def set_default_ddp_config():
     # It runs normally with Python as well.
-    rank = int(os.getenv('RANK', -1))
-    if rank == -1:
+    rank, local_rank, _, _ = get_dist_setting()
+    if rank == -1 or local_rank == -1:
         os.environ['NPROC_PER_NODE'] = '1'
         os.environ['RANK'] = '0'
         os.environ['LOCAL_RANK'] = '0'
@@ -413,21 +417,44 @@ def check_shared_disk(error, cache_dir: Optional[str] = None):
     os.makedirs(cache_dir, exist_ok=True)
     tmp_path = os.path.join(cache_dir, 'check_shared_disk.tmp')
     is_shared_disk = True
-    with safe_ddp_context(None, True):
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+
     try:
         with safe_ddp_context(None, True):
             if is_master():
                 with open(tmp_path, 'w'):
                     pass
-            else:
-                if not os.path.exists(tmp_path):
-                    is_shared_disk = False
+            if not os.path.exists(tmp_path):
+                is_shared_disk = False
+        shared_state = [None] * dist.get_world_size()
+        dist.all_gather_object(shared_state, is_shared_disk)
     finally:
         if is_master() and os.path.exists(tmp_path):
             os.remove(tmp_path)
-    shared_state = [None] * dist.get_world_size()
-    dist.all_gather_object(shared_state, is_shared_disk)
     if not all(shared_state):
         raise error
+
+
+@contextmanager
+def unwrap_model_for_generation(
+    model,
+    accelerator,
+    gather_deepspeed3_params=True,
+    gather_parameters: List[nn.Parameter] = None,
+):
+    unwrapped_model = accelerator.unwrap_model(model)
+    if accelerator.state.deepspeed_plugin is not None and accelerator.state.deepspeed_plugin.zero_stage == 3:
+        if not gather_deepspeed3_params:
+            yield accelerator.unwrap_model(model)
+        else:
+            import deepspeed
+            parameters = [
+                parameter for name, parameter in model.named_parameters()
+                if not gather_parameters or name in gather_parameters
+            ]
+            with deepspeed.zero.GatheredParameters(parameters):
+                from trl.models.utils import remove_hooks, add_hooks
+                remove_hooks(model)
+                yield accelerator.unwrap_model(model)
+                add_hooks(model)
+    else:
+        yield unwrapped_model

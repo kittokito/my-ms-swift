@@ -108,7 +108,38 @@ class VllmArguments:
 
 
 @dataclass
-class InferArguments(MergeArguments, VllmArguments, LmdeployArguments, BaseArguments):
+class SglangArguments:
+    sglang_tp_size: int = 1
+    sglang_pp_size: int = 1
+    sglang_dp_size: int = 1
+    sglang_ep_size: int = 1
+    sglang_mem_fraction_static: Optional[float] = None
+    sglang_context_length: Optional[int] = None
+    sglang_disable_cuda_graph: bool = False
+    sglang_quantization: Optional[str] = None
+    sglang_kv_cache_dtype: str = 'auto'
+    sglang_enable_dp_attention: bool = False
+    sglang_disable_custom_all_reduce: bool = True
+
+    def get_sglang_engine_kwargs(self):
+        kwargs = {
+            'tp_size': self.sglang_tp_size,
+            'pp_size': self.sglang_pp_size,
+            'dp_size': self.sglang_dp_size,
+            'ep_size': self.sglang_ep_size,
+            'mem_fraction_static': self.sglang_mem_fraction_static,
+            'context_length': self.sglang_context_length,
+            'disable_cuda_graph': self.sglang_disable_cuda_graph,
+            'quantization': self.sglang_quantization,
+            'kv_cache_dtype': self.sglang_kv_cache_dtype,
+            'enable_dp_attention': self.sglang_enable_dp_attention,
+            'disable_custom_all_reduce': self.sglang_disable_custom_all_reduce,
+        }
+        return kwargs
+
+
+@dataclass
+class InferArguments(MergeArguments, LmdeployArguments, SglangArguments, VllmArguments, BaseArguments):
     """
     InferArguments is a dataclass that extends BaseArguments, MergeArguments, VllmArguments, and LmdeployArguments.
     It is used to define the arguments required for model inference.
@@ -121,7 +152,7 @@ class InferArguments(MergeArguments, VllmArguments, LmdeployArguments, BaseArgum
         max_batch_size (int): Maximum batch size for the pt engine. Default is 1.
         val_dataset_sample (Optional[int]): Sample size for validation dataset. Default is None.
     """
-    infer_backend: Literal['vllm', 'pt', 'lmdeploy'] = 'pt'
+    infer_backend: Literal['vllm', 'pt', 'sglang', 'lmdeploy'] = 'pt'
 
     result_path: Optional[str] = None
     write_batch_size: int = 1000
@@ -158,6 +189,7 @@ class InferArguments(MergeArguments, VllmArguments, LmdeployArguments, BaseArgum
         if not is_dist():
             return
         assert not self.eval_human and not self.stream, (
+            'In DDP scenarios, interactive interfaces and streaming output are not supported.'
             f'args.eval_human: {self.eval_human}, args.stream: {self.stream}')
         self._init_device()
         init_process_group(backend=self.ddp_backend, timeout=self.ddp_timeout)
