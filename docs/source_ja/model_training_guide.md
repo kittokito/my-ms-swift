@@ -6,6 +6,8 @@
 
 まず、必要なライブラリをインストールします。
 
+※ 現在以下のコマンドを実行した後にもう一度実行する必要があります。(Numpyの依存関係)
+
 ```bash
 pip install -e . && pip install tf-keras deepspeed slack-sdk && pip install flash-attn --no-build-isolation
 ```

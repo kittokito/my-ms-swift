@@ -33,8 +33,8 @@ NPROC_PER_NODE=$nproc_per_node \
 swift pt \
     --model ./models/Qwen2.5-Coder-14B-Instruct \
     --train_type lora \
-    --dataset  ./train_data/plc_normal_02-1_kana_train.jsonl \
-    --val_dataset ./train_data/plc_normal_02-1_kana_val.jsonl \
+    --dataset  ./train_data/plc_normal_05-3_train.jsonl \
+    --val_dataset ./train_data/plc_normal_05-3_val.jsonl \
     --torch_dtype bfloat16 \
     --do_eval true \
     --streaming false \
@@ -46,7 +46,7 @@ swift pt \
     --weight_decay 0.01 \
     --eval_steps 50 \
     --save_strategy  epoch \
-    --save_total_limit 3 \
+    --save_total_limit 2 \
     --logging_steps 20 \
     --deepspeed zero3 \
     --max_length 16384 \
