@@ -1,8 +1,6 @@
 import os
 
-import torch
-
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
 
 
 def _test_model(model_id, **kwargs):
@@ -112,6 +110,19 @@ def test_dots():
     _test_model('rednote-hilab/dots.llm1.inst')
 
 
+def test_kimi_dev():
+    _test_model('moonshotai/Kimi-Dev-72B')
+
+
+def test_hunyuan():
+    _test_model('Tencent-Hunyuan/Hunyuan-A13B-Instruct')
+
+
+def test_ernie():
+    # _test_model('PaddlePaddle/ERNIE-4.5-0.3B-PT')
+    _test_model('PaddlePaddle/ERNIE-4.5-21B-A3B-PT')
+
+
 if __name__ == '__main__':
     # test_qwen2()
     # test_llama2()
@@ -132,4 +143,7 @@ if __name__ == '__main__':
     # test_moonlight()
     # test_deepseek_v2()
     # test_deepseek_moe()
-    test_dots()
+    # test_dots()
+    # test_kimi_dev()
+    # test_hunyuan()
+    test_ernie()

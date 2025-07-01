@@ -122,7 +122,7 @@ Refer to the [generation_config](https://huggingface.co/docs/transformers/main_c
 
 The following are the parameters for quantization when loading a model. For detailed meanings, you can refer to the [quantization](https://huggingface.co/docs/transformers/main/en/main_classes/quantization) documentation. Note that this does not include `gptq` and `awq` quantization parameters involved in `swift export`.
 
-- 🔥quant_method: The quantization method used when loading the model. Options are `bnb`, `hqq`, `eetq`.
+- 🔥quant_method: The quantization method used when loading the model. Optional values are 'bnb', 'hqq', 'eetq', 'quanto', and 'fp8'. The default is None.
 - 🔥quant_bits: Number of bits for quantization, default is None.
 - hqq_axis: HQQ quantization axis, default is None.
 - bnb_4bit_compute_dtype: The computation type for bnb quantization. Options are `float16`, `bfloat16`, `float32`. The default is None, which sets it to `torch_dtype`.
@@ -488,7 +488,6 @@ The meanings of the following parameters can be referenced [here](https://huggin
   - sleep_level: make vllm sleep when model is training. Options are 0 or 1, default is 0, no sleep
   - offload_optimizer: Whether to offload optimizer parameters during inference with vLLM. The default is `False`.
   - offload_model: Whether to offload the model during inference with vLLM. The default is `False`.
-  - gc_collect_after_offload: Whether to perform garbage collection (both Python GC and GPU GC) after offloading. The default is `False`.
   - completion_length_limit_scope: Specifies the scope of the `max_completion_length` limit in multi-turn conversations.
   When set to `total`, the total output length across all turns must not exceed `max_completion_length`.
   When set to `per_round`, each individual turn's output length is limited separately.
@@ -512,10 +511,10 @@ The meanings of the following parameters can be referenced [here](https://huggin
 The hyperparameters for the reward function can be found in the [Built-in Reward Functions section](#built-in-reward-functions).
 
 cosine reward function arguments
-- cosine_min_len_value_wrong (default: 0.0): Reward value corresponding to the minimum length when the answer is incorrect. Default is 0.0
-- cosine_max_len_value_wrong (default: -0.5): Reward value corresponding to the maximum length when the answer is incorrect. Default is -0.5
-- cosine_min_len_value_correct (default: 1.0): Reward value corresponding to the minimum length when the answer is correct. Default is 1.0
-- cosine_max_len_value_correct (default: 0.5): Reward value corresponding to the maximum length when the answer is correct. Default is 0.5
+- cosine_min_len_value_wrong (default: -0.5): Reward value corresponding to the minimum length when the answer is incorrect.
+- cosine_max_len_value_wrong (default: 0.0): Reward value corresponding to the maximum length when the answer is incorrect.
+- cosine_min_len_value_correct (default: 1.0): Reward value corresponding to the minimum length when the answer is correct.
+- cosine_max_len_value_correct (default: 0.5): Reward value corresponding to the maximum length when the answer is correct.
 - cosine_max_len (default value equal to the model's maximum generation capacity): Maximum length limit for generated text. Default value equal to max_completion_length
 
 repetition penalty function arguments
@@ -604,7 +603,7 @@ Export Arguments include the [basic arguments](#base-arguments) and [merge argum
 
 - 🔥output_dir: The path for storing exported results. The default value is None, and an appropriate suffix path will be automatically set.
 - exist_ok: If output_dir exists, do not raise an exception and overwrite the contents. The default value is False.
-- 🔥quant_method: Options are 'gptq', 'awq', or 'bnb', with the default being None. Examples can be found [here](https://github.com/modelscope/ms-swift/tree/main/examples/export/quantize).
+- 🔥quant_method: Options are 'gptq', 'awq', 'bnb' or 'fp8', with the default being None. Examples can be found [here](https://github.com/modelscope/ms-swift/tree/main/examples/export/quantize).
 - quant_n_samples: The number of samples for the validation set used by gptq/awq, with a default of 256.
 - max_length: Max length for the calibration set, default value is 2048.
 - quant_batch_size: Quantization batch size, default is 1.

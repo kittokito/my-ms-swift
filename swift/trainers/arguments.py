@@ -201,7 +201,7 @@ class GRPOArgumentsMixin:
     move_model_batches: Optional[int] = None
     offload_optimizer: bool = False
     offload_model: bool = False
-    gc_collect_after_offload: bool = False
+    gc_collect_after_offload: bool = False  # deprecated
 
     # multi turn
     multi_turn_func: Optional[str] = None  # deprecated
@@ -225,6 +225,7 @@ class GRPOArgumentsMixin:
 
     # dataset
     dataset_shuffle: Optional[bool] = True
+    split_dataset_ratio: float = 0.0
 
 
 @dataclass
