@@ -309,6 +309,18 @@ def terminate_instance():
             pass
 
 
+def send_startup_notification():
+    """
+    スクリプト開始時にSlackに通知を送信する
+    """
+    ip_address = get_ip_address()
+    message = f"-------GPU監視スクリプト開始-------------------\nIPアドレス: {ip_address}"
+    try:
+        client.chat_postMessage(channel=SLACK_CHANNEL, text=message)
+        print("Startup notification sent:", message)
+    except SlackApiError as e:
+        print("Error sending startup notification:", e)
+
 def str2bool(v):
     """文字列をブール値に変換する関数"""
     if isinstance(v, bool):
@@ -348,6 +360,9 @@ if __name__ == '__main__':
     auto_terminate = args.auto_terminate
 
     print(f"GPU監視を開始します: 閾値={threshold}%, 連続回数={consecutive_threshold}, 自動終了={auto_terminate}")
+    
+    # スクリプト開始時にSlackに通知を送信
+    send_startup_notification()
     
     while True:
         check_count += 1
