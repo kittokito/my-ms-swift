@@ -5,8 +5,8 @@ from typing import List, Union
 from swift.llm.train import SwiftSft
 from swift.utils import get_logger, is_master, plot_images
 from ..argument import MegatronTrainArguments
+from ..trainers import MegatronTrainer
 from ..utils import patch_megatron_tokenizer
-from .trainers import MegatronTrainer
 from .utils import build_streaming_dataloader
 
 logger = get_logger()
@@ -25,7 +25,7 @@ class MegatronSft(SwiftSft):
         args = self.args
         _, self.processor = args.get_model_processor(load_model=False)
         patch_megatron_tokenizer(self.processor)
-        args.init_model_args(self.processor.model_info.config)
+        args.init_model_args(self.processor, self.processor.model_info.config)
         self._prepare_template()
         self.template.use_megatron = True
         args.save_args(args.save)

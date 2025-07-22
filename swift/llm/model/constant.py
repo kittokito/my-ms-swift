@@ -43,6 +43,7 @@ class LLMModelType:
     chatglm3 = 'chatglm3'
     glm4 = 'glm4'
     glm4_0414 = 'glm4_0414'
+    glm4_5 = 'glm4_5'
     glm4_z1_rumination = 'glm4_z1_rumination'
 
     glm_edge = 'glm_edge'
@@ -154,6 +155,7 @@ class MLLMModelType:
     mimo_vl = 'mimo_vl'
 
     glm4v = 'glm4v'
+    glm4_1v = 'glm4_1v'
     glm_edge_v = 'glm_edge_v'
     cogvlm = 'cogvlm'
     cogagent_vqa = 'cogagent_vqa'
@@ -219,6 +221,7 @@ class MLLMModelType:
     got_ocr2_hf = 'got_ocr2_hf'
     step_audio = 'step_audio'
     kimi_vl = 'kimi_vl'
+    keye_vl = 'keye_vl'
 
     phi3_vision = 'phi3_vision'
     phi4_multimodal = 'phi4_multimodal'
@@ -231,6 +234,7 @@ class MLLMModelType:
     megrez_omni = 'megrez_omni'
     valley = 'valley'
     gemma3_vision = 'gemma3_vision'
+    gemma3n = 'gemma3n'
     mistral_2503 = 'mistral_2503'
 
 

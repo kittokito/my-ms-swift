@@ -33,6 +33,7 @@ from transformers.utils import is_torch_npu_available
 
 from swift.hub import get_hub
 from swift.llm import BatchSamplerShard, DataLoaderDispatcher, DataLoaderShard, Template
+from swift.llm.utils import update_generation_config_eos_token
 from swift.plugin import MeanMetric, compute_acc, extra_tuners
 from swift.tuners import SwiftModel
 from swift.utils import get_logger, is_dist, is_mp, is_mp_ddp, ms_logger_context, seed_worker, use_torchacc
@@ -77,8 +78,12 @@ class SwiftMixin:
                         'third_party': 'swift',
                     })
         if eval_dataset is None and args:
-            args.evaluation_strategy = IntervalStrategy.NO
-            args.eval_strategy = IntervalStrategy.NO
+            if getattr(args, 'eval_dataset', None):
+                # Avoid trainer throwing errors.
+                eval_dataset = []
+            else:
+                args.evaluation_strategy = IntervalStrategy.NO
+                args.eval_strategy = IntervalStrategy.NO
 
         self._custom_metrics = {}
         self.template = template
@@ -111,6 +116,36 @@ class SwiftMixin:
             from swift.trainers.sequence_parallel import sequence_parallel
             sequence_parallel.prepare_trainer(self)
         self._fix_gradient_checkpointing()
+        update_generation_config_eos_token(self.model.generation_config, self.template)
+        if getattr(self.model, 'origin_generation_config', None):
+            self.model.origin_generation_config.eos_token_id = self.model.generation_config.eos_token_id
+        if self.args.resume_only_model and self.args.ignore_data_skip:
+            # The weights have already been loaded outside the trainer,
+            # so reading train_state is skipped here.
+            self.args.resume_from_checkpoint = None
+
+    @contextmanager
+    def _patch_deepspeed_load_checkpoint(self):
+        from transformers import trainer
+        if not self.args.resume_from_checkpoint or not self.args.resume_only_model or not hasattr(
+                trainer, 'deepspeed_load_checkpoint'):
+            yield
+            return
+        origin_deepspeed_load_checkpoint = trainer.deepspeed_load_checkpoint
+
+        def deepspeed_load_checkpoint(*args, **kwargs):
+            try:
+                return origin_deepspeed_load_checkpoint(*args, **kwargs)
+            except Exception as e:
+                logger.warning('Failed to call deepspeed_load_checkpoint function. '
+                               f'If `--resume_only_model true` is set, this warning can be ignored. {e}.')
+
+        trainer.deepspeed_load_checkpoint = deepspeed_load_checkpoint
+
+        try:
+            yield
+        finally:
+            trainer.deepspeed_load_checkpoint = origin_deepspeed_load_checkpoint
 
     def get_use_logits_to_keep(self, default_value: bool = True):
         use_logits_to_keep = self.args.use_logits_to_keep
@@ -168,7 +203,14 @@ class SwiftMixin:
                     )
                     model.peft_config['default'] = config
 
+    def _load_rng_state(self, *args, **kwargs):
+        if self.args.resume_only_model:
+            return
+        return super()._load_rng_state(*args, **kwargs)
+
     def _load_optimizer_and_scheduler(self, *args, **kwargs):
+        if self.args.resume_only_model:
+            return
         super()._load_optimizer_and_scheduler(*args, **kwargs)
         if is_mp_ddp():
             # fix mp+ddp adamw
@@ -243,8 +285,10 @@ class SwiftMixin:
                     self.model.save_pretrained(output_dir, safe_serialization=save_safetensors)
                     # copy sentencetransformers files
                     from swift.utils import copy_files_by_pattern
-                    copy_files_by_pattern(self.model.model_dir, output_dir, '*.py')
-                    copy_files_by_pattern(self.model.model_dir, output_dir, '*.json')
+                    copy_files_by_pattern(
+                        self.model.model_dir, output_dir, '*.py', exclude_patterns=['model.safetensors.index.json'])
+                    copy_files_by_pattern(
+                        self.model.model_dir, output_dir, '*.json', exclude_patterns=['model.safetensors.index.json'])
 
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         """Compatible with swift and peft"""
@@ -407,7 +451,8 @@ class SwiftMixin:
         # gradient_checkpointing
         gradient_checkpointing = self.args.gradient_checkpointing
         self._prepare_gradient_checkpointing(self.accelerator.unwrap_model(self.model))
-        with self.hub.patch_hub(), self._fix_grad_norm_nan():
+        with self.hub.patch_hub(), self._fix_grad_norm_nan(), self._patch_skip_first_batches(
+        ), self._patch_deepspeed_load_checkpoint():
             res = super().train(*args, **kwargs)
         self.template.remove_post_encode_hook()
         self.args.gradient_checkpointing = gradient_checkpointing  # recover
@@ -467,6 +512,8 @@ class SwiftMixin:
 
         if self.args.eval_use_evalscope and self.control.should_evaluate:
             self._evalscope_eval()
+            if not self.eval_dataset:
+                self.control.should_evaluate = False
         super()._maybe_log_save_evaluate(tr_loss, *args, **kwargs)
 
     def create_optimizer_and_scheduler(self, num_training_steps: int):
@@ -510,8 +557,8 @@ class SwiftMixin:
         task_config = TaskConfig(
             model=custom_model,
             eval_type=EvalType.CUSTOM,
-            datasets=self.args.eval_datasets,
-            dataset_args=self.args.eval_datasets_args,
+            datasets=self.args.eval_dataset,
+            dataset_args=self.args.eval_dataset_args,
             limit=self.args.eval_limit,
             work_dir=os.path.join(self.args.output_dir, 'eval'),
             eval_batch_size=max_batch_size,
@@ -559,8 +606,9 @@ class SwiftMixin:
     def get_batch_samples(self, *args, **kwargs):
         res = super().get_batch_samples(*args, **kwargs)
         from swift.trainers.sequence_parallel import sequence_parallel
-        if self.template.sequence_parallel_size == 1 or 'Ulysses' == sequence_parallel.__class__.__name__:
-            # ulysses split inputs in the model hook, so no need to gather num_items_in_batch
+        if (self.template.sequence_parallel_size == 1 or 'Ulysses' == sequence_parallel.__class__.__name__
+                or 'RingAttention' == sequence_parallel.__class__.__name__):
+            # ulysses and ring attention split inputs in the model hook, so no need to gather num_items_in_batch
             return res
 
         batch_samples, num_items_in_batch = res
@@ -570,14 +618,33 @@ class SwiftMixin:
         dist.all_reduce(num_items_in_batch, dist.ReduceOp.SUM, sequence_parallel.sp_group)
         return batch_samples, num_items_in_batch
 
+    @contextmanager
+    def _patch_skip_first_batches(self):
+        from transformers import trainer
+        origin_skip_first_batches = trainer.skip_first_batches
+
+        def skip_first_batches(dataloader, num_batches=0):
+            if isinstance(dataloader, (DataLoaderShard, DataLoaderDispatcher)):
+                # DataLoaderMixin
+                return self.get_train_dataloader(skip_batches=num_batches)
+            else:
+                return origin_skip_first_batches(dataloader, num_batches)
+
+        trainer.skip_first_batches = skip_first_batches
+        try:
+            yield
+        finally:
+            trainer.skip_first_batches = origin_skip_first_batches
+
 
 class DataLoaderMixin:
 
-    def get_train_dataloader(self):
+    def get_train_dataloader(self, skip_batches=0):
         dataloader = None
         if self.template.sequence_parallel_size > 1:
             from swift.trainers.sequence_parallel import sequence_parallel
-            dataloader = sequence_parallel.get_dataloader(self, self.train_dataset, self._train_batch_size)
+            dataloader = sequence_parallel.get_dataloader(
+                self, self.train_dataset, self._train_batch_size, skip_batches=skip_batches)
         if dataloader is None:
             # Higher efficiency
             if self.train_dataset is None:
@@ -603,6 +670,9 @@ class DataLoaderMixin:
                     len(train_dataset), batch_size=self._train_batch_size, **batch_sampler_params)
                 dataloader_params['worker_init_fn'] = partial(
                     seed_worker, num_workers=self.args.dataloader_num_workers, rank=self.args.process_index)
+                if skip_batches > 0:
+                    from accelerate.data_loader import SkipBatchSampler
+                    batch_sampler = SkipBatchSampler(batch_sampler, skip_batches=skip_batches)
                 dataloader_params['batch_sampler'] = batch_sampler
                 dataloader = DataLoaderShard(train_dataset, device=self.accelerator.device, **dataloader_params)
             else:
@@ -610,8 +680,7 @@ class DataLoaderMixin:
                 if dist.is_initialized() and dataloader_params['prefetch_factor']:
                     dataloader_params['prefetch_factor'] = dataloader_params['prefetch_factor'] * dist.get_world_size()
                 dataloader = DataLoader(train_dataset, batch_size=self._train_batch_size, **dataloader_params)
-                dataloader = DataLoaderDispatcher(dataloader, self.accelerator.device)
-
+                dataloader = DataLoaderDispatcher(dataloader, self.accelerator.device, skip_batches=skip_batches)
         return dataloader
 
     def get_eval_dataloader(self, eval_dataset=None):

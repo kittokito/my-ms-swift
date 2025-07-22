@@ -1,8 +1,8 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 
-from .env import (get_dist_setting, get_node_setting, get_pai_tensorboard_dir, is_deepspeed_enabled, is_dist,
-                  is_dist_ta, is_local_master, is_master, is_mp, is_mp_ddp, is_pai_training_job, torchacc_trim_graph,
-                  use_hf_hub, use_torchacc)
+from .env import (get_dist_setting, get_hf_endpoint, get_node_setting, get_pai_tensorboard_dir, is_deepspeed_enabled,
+                  is_dist, is_dist_ta, is_local_master, is_master, is_mp, is_mp_ddp, is_pai_training_job,
+                  torchacc_trim_graph, use_hf_hub, use_torchacc)
 from .import_utils import (is_liger_available, is_lmdeploy_available, is_megatron_available, is_swanlab_available,
                            is_unsloth_available, is_vllm_ascend_available, is_vllm_available, is_wandb_available,
                            is_xtuner_available)
@@ -16,5 +16,5 @@ from .torch_utils import (Serializer, activate_parameters, check_shared_disk, em
                           init_process_group, safe_ddp_context, seed_worker, set_default_ddp_config, set_device,
                           show_layers, time_synchronize, unwrap_model_for_generation)
 from .utils import (add_version_to_work_dir, check_json_format, copy_files_by_pattern, deep_getattr, find_free_port,
-                    get_env_args, import_external_file, lower_bound, parse_args, patch_getattr, read_multi_line,
-                    seed_everything, split_list, subprocess_run, test_time, upper_bound)
+                    get_env_args, import_external_file, json_parse_to_dict, lower_bound, parse_args, patch_getattr,
+                    read_multi_line, seed_everything, split_list, subprocess_run, test_time, upper_bound)
