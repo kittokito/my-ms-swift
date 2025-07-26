@@ -57,11 +57,12 @@ Hints:
 - dataset_shuffle: Whether to shuffle the dataset. Defaults to True.
   - Note: The shuffling in CPT/SFT consists of two parts: dataset shuffling, controlled by `dataset_shuffle`; and shuffling in the train_dataloader, controlled by `train_dataloader_shuffle`.
 - val_dataset_shuffle: Whether to perform shuffling on the val_dataset. Default is False.
-- 🔥streaming: Stream reading and processing of the dataset, default is False. It is typically set to True when handling large datasets.
+- 🔥streaming: Stream reading and processing of the dataset, default is False.
   - Note: You need to set `--max_steps` explicitly, as the streaming dataset does not have a defined length. You can achieve training equivalent to `--num_train_epochs` by setting `--save_strategy epoch` and specifying a sufficiently large `max_steps`. Alternatively, you can set `max_epochs` to ensure training exits after the corresponding number of epochs, at which point the model weights will be validated and saved.
+  - Note: Streaming datasets can skip preprocessing wait time by overlapping preprocessing with training. Preprocessing for streaming datasets is performed only on rank 0 and then synchronized to other processes via data distribution. This approach is generally less efficient than the data sharding and reading method used by non-streaming datasets. When the world size is large, preprocessing and data distribution can become a training bottleneck.
 - interleave_prob: Defaults to None. When combining multiple datasets, the `concatenate_datasets` function is used by default. If this parameter is set, the `interleave_datasets` function will be used instead. This parameter is typically used when combining streaming datasets and is passed to the `interleave_datasets` function.
 - stopping_strategy: Can be either "first_exhausted" or "all_exhausted", with the default being "first_exhausted". This parameter is passed to the `interleave_datasets` function.
-- shuffle_buffer_size: This parameter is used to specify the shuffle buffer size for streaming datasets. Defaults to 1000.
+- shuffle_buffer_size: This parameter is used to specify the shuffle buffer size for streaming datasets. Defaults to 1000. This parameter is only effective when `dataset_shuffle` is set to true.
 - download_mode: Dataset download mode, including `reuse_dataset_if_exists` and `force_redownload`, default is reuse_dataset_if_exists.
 - columns: Used for column mapping of the dataset to ensure that the dataset conforms to the format that AutoPreprocessor can handle. For more details, see [here](../Customization/Custom-dataset.md). You can pass in a JSON string, for example: `'{"text1": "query", "text2": "response"}'`, which means mapping "text1" in the dataset to "query" and "text2" to "response". The query-response format can be processed by the AutoPreprocessor. The default value is None.
 - strict: If set to True, any row with an issue in the dataset will throw an error immediately, otherwise, erroneous data samples will be discarded. Default is False.
@@ -336,9 +337,11 @@ The following parameters are effective when `train_type` is set to `reft`.
 Parameter meanings can be found in the [vllm documentation](https://docs.vllm.ai/en/latest/serving/engine_args.html).
 
 - 🔥vllm_gpu_memory_utilization: GPU memory ratio, ranging from 0 to 1. Default is `0.9`.
+  - Note: For ms-swift versions earlier than 3.7, this parameter is named `gpu_memory_utilization`. The same applies to the following `vllm_` parameters. If you encounter parameter mismatch issues, please refer to the [ms-swift 3.6 documentation](https://swift.readthedocs.io/en/v3.6/Instruction/Command-line-parameters.html#vllm-arguments).
 - 🔥vllm_tensor_parallel_size: Tensor parallelism size. Default is `1`.
 - vllm_pipeline_parallel_size: Pipeline parallelism size. Default is `1`.
 - vllm_data_parallel_size: Data parallelism size, default is 1, effective in the infer and rollout commands.
+- vllm_enable_expert_parallel: Enable expert parallelism. Default is False.
 - vllm_max_num_seqs: Maximum number of sequences to be processed in a single iteration. Default is `256`.
 - 🔥vllm_max_model_len: Default is `None`, meaning it will be read from `config.json`.
 - vllm_disable_custom_all_reduce: Disables the custom all-reduce kernel and falls back to NCCL. For stability, the default is `True`.
