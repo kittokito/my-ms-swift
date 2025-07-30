@@ -205,7 +205,6 @@ class BaseArguments(CompatArguments, GenerationArguments, QuantizeArguments, Dat
             old_args = json.load(f)
         force_load_keys = [
             # base_args
-            'tuner_backend',
             'train_type',
             # model_args
             'task_type',
@@ -213,8 +212,6 @@ class BaseArguments(CompatArguments, GenerationArguments, QuantizeArguments, Dat
             'bnb_4bit_quant_type',
             'bnb_4bit_use_double_quant',
         ]
-        if 'megatron' in self.__class__.__name__.lower():
-            force_load_keys = []
         # If the current value is None or an empty list and it is among the following keys
         load_keys = [
             'custom_register_path',
@@ -228,6 +225,8 @@ class BaseArguments(CompatArguments, GenerationArguments, QuantizeArguments, Dat
             'new_special_tokens',
             'num_labels',
             'problem_type',
+            'rope_scaling',
+            'max_model_len',
             # quant_args
             'quant_method',
             'quant_bits',
@@ -242,7 +241,9 @@ class BaseArguments(CompatArguments, GenerationArguments, QuantizeArguments, Dat
             'use_chat_template',
             'response_prefix',
         ]
-
+        if 'megatron' in self.__class__.__name__.lower():
+            force_load_keys = []
+            load_keys.remove('use_chat_template')
         data_keys = list(f.name for f in fields(DataArguments))
         for key, old_value in old_args.items():
             if old_value is None:

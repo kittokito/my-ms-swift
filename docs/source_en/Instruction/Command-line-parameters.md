@@ -37,7 +37,8 @@ Hints:
   - Note: You can also pass a file path ending with `.txt`, where each line represents a special token.
 - num_labels: This parameter is required for classification models (i.e., `--task_type seq_cls`). It represents the number of labels, with a default value of None.
 - problem_type: This parameter is required for classification models (i.e., `--task_type seq_cls`). The options are 'regression', 'single_label_classification', and 'multi_label_classification'. The default value is None, and it will be automatically set based on the number of labels and the dataset type.
-- rope_scaling: Type of rope, supports `linear` and `dynamic` and `yarn`, should be used in conjunction with `max_length`. Default is None.
+- rope_scaling: RoPE type, supports `linear`, `dynamic`, and `yarn`, or you can directly pass in a JSON string: `"{\"factor\":2.0,\"type\":\"yarn\"}"`. Please use in conjunction with `max_model_len`. Default is None.
+- max_model_len: If using `rope_scaling`, you can set `max_model_len`. This parameter can be used to calculate the RoPE `factor` multiplier. The final `max_position_embeddings` will be set to the original value multiplied by the `factor`. If `rope_scaling` is a JSON string, this value will not take effect.
 - device_map: Device map configuration used by the model, such as 'auto', 'cpu', JSON string, or the path of a JSON file. The default is None, automatically set based on the device and distributed training conditions.
 - max_memory: When device_map is set to 'auto' or 'sequential', the model weights will be allocated to devices based on max_memory, for example: `--max_memory '{0: "20GB", 1: "20GB"}'`. The default value is None.
 - local_repo_path: Some models depend on a GitHub repo when loading. To avoid network issues during `git clone`, a local repo can be used directly. This parameter needs to be passed with the path to the local repo, with the default being `None`.
@@ -182,7 +183,8 @@ Other important parameters:
 - 🔥warmup_ratio: Default is 0.
 - save_on_each_node: Default is False. Should be considered in multi-node training.
 - save_only_model: Whether to save only the model weights without including optimizer state, random seed state, etc. Default is False.
-- 🔥resume_from_checkpoint: Parameter for resuming training from a checkpoint, pass the checkpoint path. Default is None. For resuming training from a checkpoint, keep other parameters unchanged and add `--resume_from_checkpoint checkpoint_dir` additionally.
+- 🔥resume_from_checkpoint: Parameter for resuming training from a checkpoint, pass the checkpoint path. Default is None.
+  - Tip: For resuming training from a checkpoint, keep all other parameters unchanged and additionally include `--resume_from_checkpoint checkpoint_dir`. The weights and related information will be loaded in the trainer.
   - Note: `resume_from_checkpoint` will load the model weights, optimizer weights, and random seed, and continue training from the last trained steps. You can specify `--resume_only_model` to load only the model weights.
 - resume_only_model: Default is False. If set to True when specifying resume_from_checkpoint, only the model weights will be resumed, while the optimizer states and random seed will be ignored.
   - Note: In "ms-swift>=3.7", resume_only_model will perform data skipping by default, controlled by the `ignore_data_skip` parameter. To restore the behavior of "ms-swift<3.7", please set `--ignore_data_skip true`.
@@ -359,6 +361,7 @@ Parameter meanings can be found in the [sglang documentation](https://docs.sglan
 - sglang_pp_size: Pipeline parallelism size. Default is 1.
 - sglang_dp_size: Data parallelism size. Default is 1.
 - sglang_ep_size: Expert parallelism size. Default is 1.
+- sglang_enable_ep_moe: Whether to enable EP MoE. Default is False.
 - sglang_mem_fraction_static: The fraction of GPU memory used for static allocation (model weights and KV cache memory pool). If you encounter out-of-memory errors, try reducing this value. Default is None.
 - sglang_context_length: The maximum context length of the model. Default is None, which means it will use the value from the model's `config.json`.
 - sglang_disable_cuda_graph: Disables CUDA graph. Default is False.
@@ -533,6 +536,7 @@ The meanings of the following parameters can be referenced [here](https://huggin
 The hyperparameters for the reward function can be found in the [Built-in Reward Functions section](#built-in-reward-functions).
 - top_entropy_quantile: Only tokens whose entropy ranks within the specified top quantile are included in the loss calculation. The default is 1.0, which means low-entropy tokens are not filtered. For details, refer to the [documentation](./GRPO/AdvancedResearch/entropy_mask.md).
 - log_entropy: Logs the entropy values during training. The default is False. For more information, refer to the [documentation](./GRPO/GetStarted/GRPO.md#logged-metrics).
+- importance_sampling_level: Controls how the importance sampling ratio is computed. Options are `token` and `sequence`. In `token` mode, the raw per-token log-probability ratios are used. In `sequence` mode, the log-probability ratios of all valid tokens in the sequence are averaged to produce a single ratio per sequence. The [GSPO paper](https://www.arxiv.org/abs/2507.18071) uses sequence-level importance sampling to stabilize training. The default is `token`.
 
 
 cosine reward function arguments
@@ -674,7 +678,7 @@ Export Arguments include the [basic arguments](#base-arguments) and [merge argum
 
 Specific model arguments can be set using `--model_kwargs` or environment variables, for example: `--model_kwargs '{"fps_max_frames": 12}'` or `FPS_MAX_FRAMES=12`.
 
-### qwen2_vl, qvq, qwen2_5_vl, mimo_vl
+### qwen2_vl, qvq, qwen2_5_vl, mimo_vl, keye_vl
 The parameter meanings are the same as in the `qwen_vl_utils` or `qwen_omni_utils` library. You can refer to [here](https://github.com/QwenLM/Qwen2.5-VL/blob/main/qwen-vl-utils/src/qwen_vl_utils/vision_process.py#L24)
 
 - IMAGE_FACTOR: Default is 28

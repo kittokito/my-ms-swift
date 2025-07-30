@@ -268,7 +268,7 @@ class GRPOVllmEngine(VllmEngine):
         """Multi-turn scheduler-based sampling controller."""
         current_request = infer_request
         current_turn = 1
-
+        info_dict = {}
         while True:
             messages = current_request.messages
             if current_turn == 1 or not messages[-1]['content']:
@@ -294,9 +294,21 @@ class GRPOVllmEngine(VllmEngine):
 
             if should_stop:
                 result_choice.messages = messages
+                info_dict['num_turns'] = current_turn
+                for key, value in info_dict.items():
+                    if hasattr(result_choice, key):
+                        setattr(result_choice, key, value)
+                    else:
+                        result_choice.multi_turn_infos[key] = value
+                result_choice.process_images()
                 return result
 
-            current_request = self.multi_turn_scheduler.step(current_request, result_choice, current_turn)
+            ret = self.multi_turn_scheduler.step(current_request, result_choice, current_turn)
+            if isinstance(ret, tuple):
+                current_request, info_dict = ret
+            else:
+                current_request = ret
+                info_dict = {}
             assert isinstance(current_request, RolloutInferRequest)
             if current_request.messages[-1]['role'] == 'assistant':
                 # Add a dummy response to allow engine to continue generating
@@ -336,7 +348,7 @@ class GRPOVllmEngine(VllmEngine):
         except Exception:
             pass
 
-    def _create_chat_completion_response(self, result, template: Template, generation_config,
+    def _create_chat_completion_response(self, result, template: Template, request_config,
                                          request_id) -> ChatCompletionResponse:
         assert result is not None
         num_generated_tokens = sum(len(output.token_ids) for output in result.outputs)
@@ -345,7 +357,7 @@ class GRPOVllmEngine(VllmEngine):
         for output in result.outputs:
             output.token_ids = list(output.token_ids)
             response = template.decode(output.token_ids)
-            logprobs = self._get_logprobs(output.logprobs, output.token_ids, generation_config.top_logprobs)
+            logprobs = self._get_logprobs(output.logprobs, output.token_ids, request_config.top_logprobs)
             toolcall = self._get_toolcall(response, template)
 
             if self.use_gym_env:
@@ -355,12 +367,15 @@ class GRPOVllmEngine(VllmEngine):
             else:
                 choice_cls = ChatCompletionResponseChoice
 
+            token_ids = output.token_ids if request_config.return_details else None
             choice = choice_cls(
                 index=output.index,
                 message=ChatMessage(role='assistant', content=response, tool_calls=toolcall),
                 finish_reason=output.finish_reason,
                 logprobs=logprobs,
+                token_ids=token_ids,
             )
-
             choices.append(choice)
-        return ChatCompletionResponse(model=self.model_name, choices=choices, usage=usage_info, id=request_id)
+        prompt_token_ids = result.prompt_token_ids if request_config.return_details else None
+        return ChatCompletionResponse(
+            model=self.model_name, choices=choices, usage=usage_info, id=request_id, prompt_token_ids=prompt_token_ids)

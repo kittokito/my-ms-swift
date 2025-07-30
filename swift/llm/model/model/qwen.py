@@ -553,6 +553,8 @@ register_model(
                 Model('swift/Qwen3-235B-A22B-AWQ', 'cognitivecomputations/Qwen3-235B-A22B-AWQ'),
             ]),
             ModelGroup([
+                Model('Qwen/Qwen3-30B-A3B-Instruct-2507', 'Qwen/Qwen3-30B-A3B-Instruct-2507'),
+                Model('Qwen/Qwen3-30B-A3B-Instruct-2507-FP8', 'Qwen/Qwen3-30B-A3B-Instruct-2507-FP8'),
                 Model('Qwen/Qwen3-235B-A22B-Instruct-2507', 'Qwen/Qwen3-235B-A22B-Instruct-2507'),
                 Model('Qwen/Qwen3-235B-A22B-Instruct-2507-FP8', 'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8'),
                 # awq
@@ -561,6 +563,7 @@ register_model(
             ModelGroup([
                 Model('Qwen/Qwen3-Coder-480B-A35B-Instruct', 'Qwen/Qwen3-Coder-480B-A35B-Instruct'),
                 Model('Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8', 'Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8'),
+                Model('swift/Qwen3-Coder-480B-A35B-Instruct-AWQ'),
             ],
                        tags=['coding']),
         ],
@@ -575,8 +578,12 @@ register_model(
         LLMModelType.qwen3_moe_thinking,
         [
             ModelGroup([
+                Model('Qwen/Qwen3-30B-A3B-Thinking-2507', 'Qwen/Qwen3-30B-A3B-Thinking-2507'),
+                Model('Qwen/Qwen3-30B-A3B-Thinking-2507-FP8', 'Qwen/Qwen3-30B-A3B-Thinking-2507-FP8'),
                 Model('Qwen/Qwen3-235B-A22B-Thinking-2507', 'Qwen/Qwen3-235B-A22B-Thinking-2507'),
                 Model('Qwen/Qwen3-235B-A22B-Thinking-2507-FP8', 'Qwen/Qwen3-235B-A22B-Thinking-2507-FP8'),
+                # awq
+                Model('swift/Qwen3-235B-A22B-Thinking-2507-AWQ')
             ]),
         ],
         TemplateType.qwen3_thinking,

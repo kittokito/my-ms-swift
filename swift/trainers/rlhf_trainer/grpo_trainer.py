@@ -130,7 +130,7 @@ class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
                         reward_func_kwargs['tokenizer'] = self.processing_class
                     reward_funcs[i] = reward_func_class(**reward_func_kwargs)
                 elif not callable(reward_func):
-                    raise ValueError(f'reward_function {reward_func} is not implemented in swift.llm.plugin')
+                    raise ValueError(f'reward_function {reward_func} is not implemented in swift.plugin')
 
         self.reward_funcs = reward_funcs
         self.reward_func_names = []
@@ -205,6 +205,7 @@ class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
         self.epsilon_high = args.epsilon_high if args.epsilon_high is not None else args.epsilon
 
         self.top_entropy_quantile = args.top_entropy_quantile
+        self.importance_sampling_level = args.importance_sampling_level
 
         self.use_liger_loss = self.args.use_liger_kernel
         if self.use_liger_loss:
@@ -730,7 +731,7 @@ class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
                     _input: Dict = deepcopy(inputs[i])
                     InferRequest.remove_response(_input['messages'])
                     _input['messages'].append({'role': 'assistant', 'content': choice.message.content})
-                    _choices.append((_input['messages'], choice.finish_reason))
+                    _choices.append((_input['messages'], choice.finish_reason, {}))
                 outputs.append(_choices)
             outputs = [item for sublist in outputs for item in sublist]
         else:
@@ -795,12 +796,23 @@ class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
                     for stop, _input, result in zip(should_stops, current_inputs, results):
                         index = _input['index']
                         if stop:
-                            outputs[index] = (_input['messages'], _input['finish_reason'])
+                            outputs[index] = (_input['messages'], _input['finish_reason'],
+                                              _input.get('multi_turn_infos', {'num_turns': 1}))
                         else:
                             current_request = self.inputs_to_rolloutrequest([_input])[0]
-                            infer_request = self.multi_turn_scheduler.step(current_request, result.choices[0],
-                                                                           current_turn)
+                            ret = self.multi_turn_scheduler.step(current_request, result.choices[0], current_turn)
+                            if isinstance(ret, tuple):
+                                infer_request, info_dict = ret
+                            else:
+                                infer_request = ret
+                                info_dict = {}
+                            info_dict['num_turns'] = current_turn + 1
                             pending_input = asdict(infer_request)
+                            if 'multi_turn_infos' not in pending_input:
+                                pending_input['multi_turn_infos'] = {}
+                            for key, value in info_dict.items():
+                                pending_input['multi_turn_infos'][key] = value
+
                             pending_input['index'] = index
                             pending_inputs.append(pending_input)
 
@@ -893,6 +905,9 @@ class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
                     outputs = self._infer_single_or_multi_turn(inputs, self.request_config)
 
             if self.vllm_mode == 'colocate' and self.args.sleep_level > 0:
+                # Reset prefix cache before sleeping to prevent using stale cache upon waking up
+                # https://github.com/modelscope/ms-swift/pull/5143
+                self.engine.engine.reset_prefix_cache()
                 self.engine.engine.sleep(level=self.args.sleep_level)
                 empty_cache()
 
@@ -924,6 +939,11 @@ class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
         for i, output in enumerate(outputs):
             inputs[i]['messages'] = output[0]
             inputs[i]['is_truncated'] = output[1] == 'length'
+            multi_turn_infos = output[2] if len(output) > 2 else {}
+            if 'images' in multi_turn_infos:
+                # override images
+                inputs[i]['images'] = multi_turn_infos['images']
+            inputs[i]['multi_turn_infos'] = multi_turn_infos
             if self.use_gym_env:
                 inputs[i]['total_reward'] = output[2]
                 inputs[i]['trajectory_info'] = output[3]
@@ -1260,7 +1280,20 @@ class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
         old_per_token_logps = (
             per_token_logps.detach() if inputs['old_per_token_logps'] is None else inputs['old_per_token_logps'])
 
-        coef_1 = torch.exp(per_token_logps - old_per_token_logps)
+        log_ratio = per_token_logps - old_per_token_logps
+        if self.importance_sampling_level == 'token':
+            log_importance_weights = log_ratio
+        elif self.importance_sampling_level == 'sequence':
+            log_importance_weights = (log_ratio * completion_mask).sum(-1) / completion_mask.sum(-1).clamp(min=1.0)
+            log_importance_weights = log_importance_weights.unsqueeze(-1)
+        else:
+            raise ValueError(
+                f"Unknown importance sampling level: {self.importance_sampling_level}. Possible values are 'token' "
+                "and 'sequence'.")
+        # From here, log_importance_weights (and all subsequent tensors, coef_1, coef_2, etc.) shape depends on
+        # importance_sampling_level: "token" level: (B, T); "sequence" level: (B, 1)
+
+        coef_1 = torch.exp(log_importance_weights)
         coef_2 = torch.clamp(coef_1, 1 - self.epsilon_low, 1 + self.epsilon_high)
         if self.args.delta is not None:
             coef_1 = torch.clamp(coef_1, max=self.args.delta)
@@ -1282,8 +1315,16 @@ class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
         else:
             raise ValueError(f'Unknown loss type: {self.loss_type}')
 
+        completion_token_count = completion_mask.sum().clamp(min=1.0)
+
+        def masked_batch_mean(x):
+            if x.shape[1] == 1:  # when importance_sampling_level == "sequence"
+                return x.mean()
+            else:
+                return (x * completion_mask).sum() / completion_token_count
+
         if self.beta != 0.0:
-            mean_kl = (per_token_kl * completion_mask).sum() / completion_mask.sum()
+            mean_kl = masked_batch_mean(per_token_kl)
             self._metrics[mode]['kl'].append(self.accelerator.gather_for_metrics(mean_kl).nanmean().item())
 
         # Compute the clipped probability ratios
@@ -1291,9 +1332,9 @@ class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
         is_high_clipped = (coef_1 > 1 + self.epsilon_high) & (advantages.unsqueeze(1) > 0)
         is_region_clipped = is_low_clipped | is_high_clipped
 
-        low_clip = (is_low_clipped * completion_mask).sum(1) / completion_mask.sum(1)
-        high_clip = (is_high_clipped * completion_mask).sum(1) / completion_mask.sum(1)
-        clip_ratio = (is_region_clipped * completion_mask).sum(1) / completion_mask.sum(1)
+        low_clip = masked_batch_mean(is_low_clipped.float())
+        high_clip = masked_batch_mean(is_high_clipped.float())
+        clip_ratio = masked_batch_mean(is_region_clipped.float())
 
         gathered_low_clip = self.accelerator.gather_for_metrics(low_clip)
         self._metrics[mode]['clip_ratio/low_mean'].append(gathered_low_clip.nanmean().item())
@@ -1618,12 +1659,11 @@ class GRPOTrainer(RLHFTrainerMixin, SwiftMixin, HFGRPOTrainer):
         original_fn = self.engine.set_default_max_tokens
         original_max_len = self.engine.max_model_len
 
-        def set_default_max_tokens(_self, request_config: RequestConfig, inputs: InputsType) -> None:
+        def set_default_max_tokens(_self, request_config: RequestConfig, inputs: Dict[str, Any]) -> None:
             # Calculate required context window
             original_max_len = _self.max_model_len or 8192
-            if isinstance(inputs, dict):
-                inputs = [inputs]
-            prompt_tokens = max(_self._get_num_tokens(inp) for inp in inputs)
+            assert isinstance(inputs, dict)
+            prompt_tokens = _self._get_num_tokens(inputs)
 
             if not hasattr(_self, 'set_grpo_max_model_len'):
                 # set max model len in first round
